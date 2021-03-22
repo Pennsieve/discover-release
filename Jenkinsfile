@@ -5,7 +5,7 @@ node('executor') {
 
     def serviceName = "discover-release"
     def authorName  = sh(returnStdout: true, script: 'git --no-pager show --format="%an" --no-patch')
-    def isMaster    = env.BRANCH_NAME == "master"
+    def isMain    = env.BRANCH_NAME == "main"
 
     def commitHash  = sh(returnStdout: true, script: 'git rev-parse HEAD | cut -c-7').trim()
     def imageTag    = "${env.BUILD_NUMBER}-${commitHash}"
@@ -30,7 +30,7 @@ node('executor') {
             }
         }
 
-        if(isMaster) {
+        if(isMain) {
             stage ('Build and Push') {
                 sh "IMAGE_TAG=${imageTag} make publish"
             }
