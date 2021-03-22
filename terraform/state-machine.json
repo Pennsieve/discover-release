@@ -1,0 +1,79 @@
+{
+  "Comment": "Release data from embargo to the public Discover bucket",
+
+  "StartAt": "Run discover-release",
+
+  "States": {
+
+    "Run discover-release": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:runTask.sync",
+      "Parameters": {
+        "LaunchType": "FARGATE",
+        "Cluster": "${ecs_cluster}",
+        "TaskDefinition": "${ecs_task_definition_arn}",
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "Subnets": ${subnets},
+            "AssignPublicIp": "DISABLED",
+            "SecurityGroups": [ "${security_group}" ]
+          }
+        },
+        "Overrides": {
+          "ContainerOverrides": [{
+            "Name": "${service_name}",
+            "Environment": [{
+              "Name": "S3_KEY_PREFIX",
+              "Value.$": "$.s3_key"
+            }]
+          }]
+        }
+      },
+      "TimeoutSeconds": ${timeout_seconds},
+      "Catch": [
+        {
+          "ErrorEquals": [ "States.ALL" ],
+          "ResultPath": "$.error",
+          "Next": "Notify failure"
+        }
+      ],
+      "ResultPath": null,
+      "Next": "Notify success"
+    },
+
+    "Notify success": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "${discover_publish_queue_id}",
+        "MessageBody": {
+          "job_type": "RELEASE",
+          "organization_id.$": "$.organization_id",
+          "dataset_id.$": "$.dataset_id",
+          "version.$": "$.version",
+          "status": "PUBLISH_SUCCEEDED",
+          "success": true
+        }
+      },
+      "End": true
+    },
+
+    "Notify failure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "${discover_publish_queue_id}",
+        "MessageBody": {
+          "job_type": "RELEASE",
+          "organization_id.$": "$.organization_id",
+          "dataset_id.$": "$.dataset_id",
+          "version.$": "$.version",
+          "status": "RELEASE_FAILED",
+          "success": false,
+          "error.$": "$.error.Cause"
+        }
+      },
+      "End": true
+    }
+  }
+}

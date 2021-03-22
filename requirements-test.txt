@@ -1,0 +1,4 @@
+pytest
+boto3
+isort>=5.0.0
+black

@@ -1,0 +1,41 @@
+version: '3.4'
+services:
+
+  test:
+    build:
+      context: .
+      target: test
+    depends_on:
+      - localstack
+    environment:
+      ENVIRONMENT: local
+      SERVICE_NAME: discover-release
+      EMBARGO_BUCKET: test-embargo-bucket-use1
+      PUBLISH_BUCKET: test-publish-bucket-use1
+      AWS_ACCESS_KEY_ID: xxxx
+      AWS_SECRET_ACCESS_KEY: yyyy
+      AWS_DEFAULT_REGION: 'us-east-1'
+    entrypoint: "python3 -m pytest -s -x test.py"
+
+  localstack:
+    image: localstack/localstack:0.11.3
+    environment:
+      SERVICES: s3
+    expose:
+      - "4572"
+
+  format:
+    build:
+      context: .
+      target: test
+    volumes:
+      - .:/app/source_code
+    entrypoint: "sh -c 'isort --profile black /app/source_code && black /app/source_code'"
+
+  lint:
+    build:
+      context: .
+      target: test
+    volumes:
+      - .:/app/source_code
+    entrypoint: "sh -c 'isort --profile black --check-only /app/source_code && black --check /app/source_code'"
