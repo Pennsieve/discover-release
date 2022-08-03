@@ -159,7 +159,7 @@ def copy_object(event: CopyEvent):
         f"Copying s3://{event.embargo_bucket}/{event.key} to s3://{event.publish_bucket}/{event.key}"
     )
 
-    GB = 1024 ** 3
+    GB = 1024**3
     config = boto3.s3.transfer.TransferConfig(
         multipart_threshold=5 * GB, use_threads=False
     )
