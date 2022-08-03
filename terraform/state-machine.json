@@ -51,6 +51,7 @@
           "organization_id.$": "$.organization_id",
           "dataset_id.$": "$.dataset_id",
           "version.$": "$.version",
+          "s3_bucket.$": "$.s3_bucket",
           "status": "PUBLISH_SUCCEEDED",
           "success": true
         }
@@ -68,6 +69,7 @@
           "organization_id.$": "$.organization_id",
           "dataset_id.$": "$.dataset_id",
           "version.$": "$.version",
+          "s3_bucket.$": "$.s3_bucket",
           "status": "RELEASE_FAILED",
           "success": false,
           "error.$": "$.error.Cause"
