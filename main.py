@@ -21,7 +21,6 @@ import structlog
 
 ENVIRONMENT = os.environ["ENVIRONMENT"]
 SERVICE_NAME = os.environ["SERVICE_NAME"]
-PUBLISH_BUCKET = os.environ["PUBLISH_BUCKET"]
 EMBARGO_BUCKET = os.environ["EMBARGO_BUCKET"]
 
 LOCALSTACK_URL = "http://localstack:4572"
@@ -81,7 +80,7 @@ local = ThreadLocalS3Client(ENVIRONMENT)
 # --------------------------------------------------
 
 
-def release_files(s3_key_prefix):
+def release_files(s3_key_prefix, publish_bucket):
 
     # Ensure the S3 key ends with a '/'
     if not s3_key_prefix.endswith("/"):
@@ -94,7 +93,11 @@ def release_files(s3_key_prefix):
     log = structlog.get_logger()
     log = log.bind(**{"class": f"{release_files.__module__}.{release_files.__name__}"})
     log = log.bind(
-        pennsieve={"service_name": SERVICE_NAME, "s3_key_prefix": s3_key_prefix}
+        pennsieve={
+            "service_name": SERVICE_NAME,
+            "s3_key_prefix": s3_key_prefix,
+            "publish_bucket": publish_bucket,
+        }
     )
 
     try:
@@ -104,7 +107,7 @@ def release_files(s3_key_prefix):
             for _ in pool.imap_unordered(
                 copy_object,
                 (
-                    CopyEvent(EMBARGO_BUCKET, PUBLISH_BUCKET, key, log)
+                    CopyEvent(EMBARGO_BUCKET, publish_bucket, key, log)
                     for key in iter_keys(EMBARGO_BUCKET, s3_key_prefix)
                 ),
             ):
@@ -169,6 +172,7 @@ def copy_object(event: CopyEvent):
         event.publish_bucket,
         event.key,
         Config=config,
+        ExtraArgs={"RequestPayer": "requester"},
     )
 
 
@@ -189,4 +193,5 @@ def delete_object(event: DeleteEvent):
 
 if __name__ == "__main__":
     s3_key_prefix = os.environ["S3_KEY_PREFIX"]
-    release_files(s3_key_prefix)
+    publish_bucket = os.environ["PUBLISH_BUCKET"]
+    release_files(s3_key_prefix, publish_bucket)

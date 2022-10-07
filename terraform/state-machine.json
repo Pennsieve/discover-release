@@ -25,6 +25,9 @@
             "Environment": [{
               "Name": "S3_KEY_PREFIX",
               "Value.$": "$.s3_key"
+            }, {
+              "Name": "PUBLISH_BUCKET",
+              "Value.$": "$.s3_bucket"
             }]
           }]
         }
