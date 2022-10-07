@@ -93,7 +93,11 @@ def release_files(s3_key_prefix, publish_bucket):
     log = structlog.get_logger()
     log = log.bind(**{"class": f"{release_files.__module__}.{release_files.__name__}"})
     log = log.bind(
-        pennsieve={"service_name": SERVICE_NAME, "s3_key_prefix": s3_key_prefix, "publish_bucket": publish_bucket}
+        pennsieve={
+            "service_name": SERVICE_NAME,
+            "s3_key_prefix": s3_key_prefix,
+            "publish_bucket": publish_bucket,
+        }
     )
 
     try:
@@ -168,7 +172,7 @@ def copy_object(event: CopyEvent):
         event.publish_bucket,
         event.key,
         Config=config,
-        ExtraArgs={'RequestPayer': 'requester'}
+        ExtraArgs={"RequestPayer": "requester"},
     )
 
 
