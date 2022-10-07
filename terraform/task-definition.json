@@ -8,7 +8,7 @@
     "environment": [
       { "name" : "ENVIRONMENT", "value": "${environment_name}" },
       { "name" : "SERVICE_NAME", "value": "${service_name}" },
-      { "name" : "EMBARGO_BUCKET", "value": "${embargo_bucket}" },
+      { "name" : "EMBARGO_BUCKET", "value": "${embargo_bucket}" }
     ],
     "logConfiguration": {
       "logDriver": "awslogs",
