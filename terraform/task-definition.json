@@ -9,7 +9,6 @@
       { "name" : "ENVIRONMENT", "value": "${environment_name}" },
       { "name" : "SERVICE_NAME", "value": "${service_name}" },
       { "name" : "EMBARGO_BUCKET", "value": "${embargo_bucket}" },
-      { "name" : "PUBLISH_BUCKET", "value": "${publish_bucket}" }
     ],
     "logConfiguration": {
       "logDriver": "awslogs",

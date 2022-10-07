@@ -4,7 +4,9 @@ import time
 import boto3
 import pytest
 
-from main import EMBARGO_BUCKET, LOCALSTACK_URL, PUBLISH_BUCKET, release_files
+from main import EMBARGO_BUCKET, LOCALSTACK_URL, release_files
+
+PUBLISH_BUCKET = "test-publish-bucket"
 
 # This key corresponds to assets belonging to a dataset in the embargo bucket
 # that needs to be released to the public bucket.
@@ -61,7 +63,7 @@ def test_copy_files_to_publish_bucket(publish_bucket, embargo_bucket):
     assert sorted(s3_keys(publish_bucket)) == []
     assert sorted(s3_keys(embargo_bucket)) == sorted([s3_key_to_move, s3_key_to_leave])
 
-    release_files(S3_PREFIX_TO_MOVE)
+    release_files(S3_PREFIX_TO_MOVE, PUBLISH_BUCKET)
 
     # VERIFY RESULTS
     assert sorted(s3_keys(publish_bucket)) == [s3_key_to_move]
@@ -78,7 +80,7 @@ def test_handle_key_without_trailing_slash(publish_bucket, embargo_bucket):
     assert sorted(s3_keys(publish_bucket)) == []
     assert sorted(s3_keys(embargo_bucket)) == sorted([s3_key_to_move, s3_key_to_leave])
 
-    release_files(S3_PREFIX_TO_MOVE)
+    release_files(S3_PREFIX_TO_MOVE, PUBLISH_BUCKET)
 
     # VERIFY RESULTS
     assert sorted(s3_keys(publish_bucket)) == [s3_key_to_move]
@@ -100,7 +102,7 @@ def test_copy_files_pagination(publish_bucket, embargo_bucket):
     assert sorted(s3_keys(publish_bucket)) == []
     assert sorted(s3_keys(embargo_bucket)) == sorted(s3_keys_to_move + s3_keys_to_leave)
 
-    release_files(S3_PREFIX_TO_MOVE)
+    release_files(S3_PREFIX_TO_MOVE, PUBLISH_BUCKET)
 
     # VERIFY RESULTS
     assert sorted(s3_keys(publish_bucket)) == sorted(s3_keys_to_move)
