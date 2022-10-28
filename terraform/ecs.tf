@@ -12,7 +12,6 @@ data "template_file" "task_definition" {
     image_tag                    = var.image_tag
     service_name                 = var.service_name
 
-    embargo_bucket = data.terraform_remote_state.platform_infrastructure.outputs.discover_embargo_bucket_id
   }
 }
 

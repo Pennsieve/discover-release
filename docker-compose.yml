@@ -10,7 +10,6 @@ services:
     environment:
       ENVIRONMENT: local
       SERVICE_NAME: discover-release
-      EMBARGO_BUCKET: test-embargo-bucket-use1
       AWS_ACCESS_KEY_ID: xxxx
       AWS_SECRET_ACCESS_KEY: yyyy
       AWS_DEFAULT_REGION: 'us-east-1'
