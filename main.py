@@ -21,7 +21,6 @@ import structlog
 
 ENVIRONMENT = os.environ["ENVIRONMENT"]
 SERVICE_NAME = os.environ["SERVICE_NAME"]
-EMBARGO_BUCKET = os.environ["EMBARGO_BUCKET"]
 
 LOCALSTACK_URL = "http://localstack:4572"
 
@@ -80,7 +79,7 @@ local = ThreadLocalS3Client(ENVIRONMENT)
 # --------------------------------------------------
 
 
-def release_files(s3_key_prefix, publish_bucket):
+def release_files(s3_key_prefix, embargo_bucket, publish_bucket):
 
     # Ensure the S3 key ends with a '/'
     if not s3_key_prefix.endswith("/"):
@@ -97,6 +96,7 @@ def release_files(s3_key_prefix, publish_bucket):
             "service_name": SERVICE_NAME,
             "s3_key_prefix": s3_key_prefix,
             "publish_bucket": publish_bucket,
+            "embargo_bucket": embargo_bucket,
         }
     )
 
@@ -107,8 +107,8 @@ def release_files(s3_key_prefix, publish_bucket):
             for _ in pool.imap_unordered(
                 copy_object,
                 (
-                    CopyEvent(EMBARGO_BUCKET, publish_bucket, key, log)
-                    for key in iter_keys(EMBARGO_BUCKET, s3_key_prefix)
+                    CopyEvent(embargo_bucket, publish_bucket, key, log)
+                    for key in iter_keys(embargo_bucket, s3_key_prefix)
                 ),
             ):
                 pass
@@ -116,8 +116,8 @@ def release_files(s3_key_prefix, publish_bucket):
             for _ in pool.imap_unordered(
                 delete_object,
                 (
-                    DeleteEvent(EMBARGO_BUCKET, key, log)
-                    for key in iter_keys(EMBARGO_BUCKET, s3_key_prefix)
+                    DeleteEvent(embargo_bucket, key, log)
+                    for key in iter_keys(embargo_bucket, s3_key_prefix)
                 ),
             ):
                 pass
@@ -132,7 +132,10 @@ def iter_keys(bucket, prefix):
     Iterator over all keys in the embargo bucket under a key prefix.
     """
     pages = local.s3_client.get_paginator("list_objects_v2").paginate(
-        Bucket=bucket, Prefix=prefix, PaginationConfig={"PageSize": 1000}
+        Bucket=bucket,
+        Prefix=prefix,
+        PaginationConfig={"PageSize": 1000},
+        RequestPayer="requester",
     )
 
     for page in pages:
@@ -188,10 +191,13 @@ def delete_object(event: DeleteEvent):
     Delete an object from the embargo bucket.
     """
     event.log.info(f"Deleting s3://{event.embargo_bucket}/{event.key}")
-    local.s3_client.delete_object(Bucket=event.embargo_bucket, Key=event.key)
+    local.s3_client.delete_object(
+        Bucket=event.embargo_bucket, Key=event.key, RequestPayer="requester"
+    )
 
 
 if __name__ == "__main__":
     s3_key_prefix = os.environ["S3_KEY_PREFIX"]
     publish_bucket = os.environ["PUBLISH_BUCKET"]
-    release_files(s3_key_prefix, publish_bucket)
+    embargo_bucket = os.environ["EMBARGO_BUCKET"]
+    release_files(s3_key_prefix, embargo_bucket, publish_bucket)
