@@ -89,7 +89,6 @@ def test_handle_key_without_trailing_slash(publish_bucket, embargo_bucket):
 
 
 def test_copy_files_pagination(publish_bucket, embargo_bucket):
-
     # More keys than the S3 page size
     s3_keys_to_move = create_keys(S3_PREFIX_TO_MOVE, FILENAME, 1200)
     s3_keys_to_leave = [os.path.join(S3_PREFIX_TO_LEAVE, FILENAME)]
