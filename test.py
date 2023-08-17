@@ -67,8 +67,9 @@ def test_copy_files_to_publish_bucket(publish_bucket, embargo_bucket):
     release_files(S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
 
     # VERIFY RESULTS
-    assert sorted(s3_keys(publish_bucket)) == [s3_key_to_move]
-    assert sorted(s3_keys(embargo_bucket)) == [s3_key_to_leave]
+    release_results_key = os.path.join(S3_PREFIX_TO_MOVE, "discover-release-results.json")
+    assert sorted(s3_keys(publish_bucket)) == sorted([s3_key_to_move, release_results_key])
+    assert sorted(s3_keys(embargo_bucket)) == sorted([s3_key_to_leave])
 
 
 def test_handle_key_without_trailing_slash(publish_bucket, embargo_bucket):
@@ -84,7 +85,8 @@ def test_handle_key_without_trailing_slash(publish_bucket, embargo_bucket):
     release_files(S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
 
     # VERIFY RESULTS
-    assert sorted(s3_keys(publish_bucket)) == [s3_key_to_move]
+    release_results_key = os.path.join(S3_PREFIX_TO_MOVE, "discover-release-results.json")
+    assert sorted(s3_keys(publish_bucket)) == sorted([s3_key_to_move, release_results_key])
     assert sorted(s3_keys(embargo_bucket)) == [s3_key_to_leave]
 
 
@@ -105,6 +107,8 @@ def test_copy_files_pagination(publish_bucket, embargo_bucket):
     release_files(S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
 
     # VERIFY RESULTS
+    release_results_key = os.path.join(S3_PREFIX_TO_MOVE, "discover-release-results.json")
+    s3_keys_to_move.append(release_results_key)
     assert sorted(s3_keys(publish_bucket)) == sorted(s3_keys_to_move)
     assert sorted(s3_keys(embargo_bucket)) == sorted(s3_keys_to_leave)
 
