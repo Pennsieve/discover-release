@@ -10,6 +10,8 @@ Once all files are moved, the files are deleted from the embargo bucket.
 
 import os
 import threading
+import json
+import dataclasses
 from dataclasses import dataclass
 
 # Thread-based multiprocessing module
@@ -23,6 +25,12 @@ ENVIRONMENT = os.environ["ENVIRONMENT"]
 SERVICE_NAME = os.environ["SERVICE_NAME"]
 
 LOCALSTACK_URL = "http://localstack:4572"
+
+class EnhancedJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if dataclasses.is_dataclass(o):
+            return dataclasses.asdict(o)
+        return super().default(o)
 
 # Configure JSON logs in a format that ELK can understand
 # --------------------------------------------------
@@ -100,18 +108,19 @@ def release_files(s3_key_prefix, embargo_bucket, publish_bucket):
         }
     )
 
+    copy_results = []
     try:
         log.info("Starting thread pool")
 
         with Pool(processes=4) as pool:
-            for _ in pool.imap_unordered(
+            for copy_result in pool.imap_unordered(
                 copy_object,
                 (
                     CopyEvent(embargo_bucket, publish_bucket, key, log)
                     for key in iter_keys(embargo_bucket, s3_key_prefix)
                 ),
             ):
-                pass
+                copy_results.append(copy_result)
 
             for _ in pool.imap_unordered(
                 delete_object,
@@ -125,6 +134,16 @@ def release_files(s3_key_prefix, embargo_bucket, publish_bucket):
     except Exception as e:
         log.error(e, exc_info=True)
         raise
+
+    # serialize copy_results to JSON, and write to a file on S3
+    log.info(f"generating copy result JSON ({len(copy_results)} files were copied)")
+    json_data = bytes(json.dumps(copy_results, cls=EnhancedJSONEncoder), 'utf-8')
+    copy_results_key = f"{s3_key_prefix}/discover-release-results.json"
+    log.info(f"uploading copy results to s3://{publish_bucket}/{copy_results_key}")
+    client = ThreadLocalS3Client(ENVIRONMENT)
+    put_response = client.s3_client.put_object(Bucket=publish_bucket,
+                                               Key=copy_results_key,
+                                               Body=json_data)
 
 
 def iter_keys(bucket, prefix):
@@ -151,6 +170,14 @@ class CopyEvent:
     key: str
     log: Any
 
+@dataclass
+class CopyResult:
+    source_bucket: str
+    source_key: str
+    source_version: str
+    target_bucket: str
+    target_key: str
+    target_version: str
 
 def copy_object(event: CopyEvent):
     """
@@ -170,6 +197,10 @@ def copy_object(event: CopyEvent):
         multipart_threshold=5 * GB, use_threads=False
     )
 
+    # get source file attributes
+    source_attr = local.s3_client.get_object_attributes(Bucket=event.embargo_bucket, Key=event.key, ObjectAttributes=['ObjectParts'])
+
+    # copy file from source -> target
     local.s3_client.copy(
         {"Bucket": event.embargo_bucket, "Key": event.key},
         event.publish_bucket,
@@ -177,6 +208,19 @@ def copy_object(event: CopyEvent):
         Config=config,
         ExtraArgs={"RequestPayer": "requester"},
     )
+
+    # get target file attributes
+    target_attr = local.s3_client.get_object_attributes(Bucket=event.publish_bucket, Key=event.key, ObjectAttributes=['ObjectParts'])
+
+    # generate CopyResult
+    copy_result = CopyResult(event.embargo_bucket,
+                             event.key,
+                             source_attr["VersionId"] if "VersionId" in source_attr else "",
+                             event.publish_bucket,
+                             event.key,
+                             target_attr["VersionId"] if "VersionId" in target_attr else ""
+                             )
+    return copy_result
 
 
 @dataclass
