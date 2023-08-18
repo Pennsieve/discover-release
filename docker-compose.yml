@@ -16,11 +16,11 @@ services:
     entrypoint: "python3 -m pytest -s -x test.py"
 
   localstack:
-    image: localstack/localstack:0.11.3
+    image: localstack/localstack:2.2.0
     environment:
       SERVICES: s3
     expose:
-      - "4572"
+      - "4566"
 
   format:
     build:
