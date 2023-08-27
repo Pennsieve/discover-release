@@ -135,6 +135,27 @@ data "aws_iam_policy_document" "ecs_task_iam_policy_document" {
   }
 
   statement {
+    sid    = "S3Embargo50Bucket"
+    effect = "Allow"
+
+    actions = [
+      "s3:GetObject",
+      "s3:GetObjectVersion",
+      "s3:DeleteObject",
+      "s3:DeleteObjectVersion",
+      "s3:ListBucket",
+      "s3:ListBucketVersions",
+    ]
+
+    resources = [
+      data.terraform_remote_state.platform_infrastructure.outputs.discover_embargo50_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.discover_embargo50_bucket_arn}/*",
+      data.terraform_remote_state.platform_infrastructure.outputs.sparc_embargo50_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.sparc_embargo50_bucket_arn}/*",
+    ]
+  }
+
+  statement {
     sid     = "S3DiscoverBucket"
     effect  = "Allow"
     actions = ["s3:PutObject"]
@@ -144,6 +165,19 @@ data "aws_iam_policy_document" "ecs_task_iam_policy_document" {
       "${data.terraform_remote_state.platform_infrastructure.outputs.discover_publish_bucket_arn}/*",
       data.terraform_remote_state.platform_infrastructure.outputs.sparc_publish_bucket_arn,
       "${data.terraform_remote_state.platform_infrastructure.outputs.sparc_publish_bucket_arn}/*",
+    ]
+  }
+
+  statement {
+    sid     = "S3Discover50Bucket"
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+
+    resources = [
+      data.terraform_remote_state.platform_infrastructure.outputs.discover_publish50_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.discover_publish50_bucket_arn}/*",
+      data.terraform_remote_state.platform_infrastructure.outputs.sparc_publish50_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.sparc_publish50_bucket_arn}/*",
     ]
   }
 }
