@@ -199,14 +199,17 @@ def copy_object(event: CopyEvent):
     )
 
     # get source file attributes
-    #source_attr = {}
     try:
         source_attr = local.s3_client.get_object_attributes(
             Bucket=event.embargo_bucket, Key=event.key, ObjectAttributes=["ObjectParts"]
         )
-        event.log.info(f"copy_object() s3.get_object_attributes(Bucket={event.embargo_bucket}, Key={event.key}): source_attr: {source_attr}")
+        event.log.info(
+            f"copy_object() s3.get_object_attributes(Bucket={event.embargo_bucket}, Key={event.key}): source_attr: {source_attr}"
+        )
     except AttributeError:
-        event.log.warn(f"copy_object() s3.get_object_attributes(Bucket={event.embargo_bucket}, Key={event.key}): source_attr: AttributeError")
+        event.log.warn(
+            f"copy_object() s3.get_object_attributes(Bucket={event.embargo_bucket}, Key={event.key}): source_attr: AttributeError"
+        )
         source_attr = {}
 
     # copy file from source -> target
@@ -219,14 +222,17 @@ def copy_object(event: CopyEvent):
     )
 
     # get target file attributes
-    #target_attr = {}
     try:
         target_attr = local.s3_client.get_object_attributes(
             Bucket=event.publish_bucket, Key=event.key, ObjectAttributes=["ObjectParts"]
         )
-        event.log.info(f"copy_object() s3.get_object_attributes(Bucket={event.publish_bucket}, Key={event.key}): target_attr: {target_attr}")
+        event.log.info(
+            f"copy_object() s3.get_object_attributes(Bucket={event.publish_bucket}, Key={event.key}): target_attr: {target_attr}"
+        )
     except AttributeError:
-        event.log.warn(f"copy_object() s3.get_object_attributes(Bucket={event.publish_bucket}, Key={event.key}): target_attr: AttributeError")
+        event.log.warn(
+            f"copy_object() s3.get_object_attributes(Bucket={event.publish_bucket}, Key={event.key}): target_attr: AttributeError"
+        )
         target_attr = {}
 
     # generate CopyResult
