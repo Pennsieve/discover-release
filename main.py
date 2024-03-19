@@ -143,7 +143,10 @@ def release_files(s3_key_prefix, embargo_bucket, publish_bucket):
     log.info(f"uploading copy results to s3://{publish_bucket}/{copy_results_key}")
     client = ThreadLocalS3Client(ENVIRONMENT)
     put_response = client.s3_client.put_object(
-        Bucket=publish_bucket, Key=copy_results_key, Body=json_data, RequestPayer="requester"
+        Bucket=publish_bucket,
+        Key=copy_results_key,
+        Body=json_data,
+        RequestPayer="requester",
     )
 
 
@@ -203,7 +206,10 @@ def copy_object(event: CopyEvent):
     # get source file attributes
     try:
         source_attr = local.s3_client.get_object_attributes(
-            Bucket=event.embargo_bucket, Key=event.key, ObjectAttributes=["ObjectParts"], RequestPayer="requester"
+            Bucket=event.embargo_bucket,
+            Key=event.key,
+            ObjectAttributes=["ObjectParts"],
+            RequestPayer="requester",
         )
         event.log.info(
             f"copy_object() s3.get_object_attributes(Bucket={event.embargo_bucket}, Key={event.key}): source_attr: {source_attr}"
@@ -226,7 +232,10 @@ def copy_object(event: CopyEvent):
     # get target file attributes
     try:
         target_attr = local.s3_client.get_object_attributes(
-            Bucket=event.publish_bucket, Key=event.key, ObjectAttributes=["ObjectParts"], RequestPayer="requester"
+            Bucket=event.publish_bucket,
+            Key=event.key,
+            ObjectAttributes=["ObjectParts"],
+            RequestPayer="requester",
         )
         event.log.info(
             f"copy_object() s3.get_object_attributes(Bucket={event.publish_bucket}, Key={event.key}): target_attr: {target_attr}"
