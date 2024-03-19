@@ -107,6 +107,8 @@ def release_files(s3_key_prefix, embargo_bucket, publish_bucket):
         }
     )
 
+    log.info(f"boto3 version: {boto3.__version__}")
+
     copy_results = []
     try:
         log.info("Starting thread pool")
