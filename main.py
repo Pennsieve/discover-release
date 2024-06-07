@@ -28,10 +28,13 @@ KB = 1024**1
 MB = 1024**2
 GB = 1024**3
 
-MULTIPART_COPY_MAX_PART_SIZE = int(os.environ.get('MULTIPART_COPY_MAX_PART_SIZE', 5 * GB))
+MULTIPART_COPY_MAX_PART_SIZE = int(
+    os.environ.get("MULTIPART_COPY_MAX_PART_SIZE", 5 * GB)
+)
 
-ChecksumAlgorithmSHA256 = 'SHA256'
-CHECKSUM_ALGORITHM = os.environ.get('CHECKSUM_ALGORITHM', ChecksumAlgorithmSHA256)
+ChecksumAlgorithmSHA256 = "SHA256"
+CHECKSUM_ALGORITHM = os.environ.get("CHECKSUM_ALGORITHM", ChecksumAlgorithmSHA256)
+
 
 class EnhancedJSONEncoder(json.JSONEncoder):
     def default(self, o):
@@ -69,6 +72,7 @@ structlog.configure(
     ]
 )
 
+
 @dataclass
 class ObjectAttributes:
     bucket: str
@@ -78,6 +82,7 @@ class ObjectAttributes:
     etag: str
     sha256: str
 
+
 @dataclass
 class CopyEvent:
     embargo_bucket: str
@@ -85,11 +90,13 @@ class CopyEvent:
     key: str
     log: Any
 
+
 @dataclass
 class DeleteEvent:
     embargo_bucket: str
     key: str
     log: Any
+
 
 @dataclass
 class CopyRequest:
@@ -99,6 +106,7 @@ class CopyRequest:
     target_key: str
     max_part_size: int
     checksum_algorithm: str
+
 
 @dataclass
 class CopyResult:
@@ -115,8 +123,9 @@ class CopyResult:
     target_etag: str
     target_sha256: str
 
+
 class FileCopier:
-    def __init__(self, s3, max_part_size=5*MB):
+    def __init__(self, s3, max_part_size=5 * MB):
         self.s3 = s3
         self.max_part_size = max_part_size
 
@@ -124,16 +133,17 @@ class FileCopier:
         response = self.s3.get_object_attributes(
             Bucket=bucket,
             Key=key,
-            ObjectAttributes=['ObjectSize','ETag','Checksum'],
-            RequestPayer='requester')
-        #print(f"s3.get_object_attributes() response: {response}")
+            ObjectAttributes=["ObjectSize", "ETag", "Checksum"],
+            RequestPayer="requester",
+        )
+        # print(f"s3.get_object_attributes() response: {response}")
         return ObjectAttributes(
-            bucket = bucket,
-            key = key,
-            size = response.get('ObjectSize'),
-            version_id = response.get('VersionId'),
-            etag = response.get('ETag'),
-            sha256 = response.get('Checksum', {}).get('ChecksumSHA256')
+            bucket=bucket,
+            key=key,
+            size=response.get("ObjectSize"),
+            version_id=response.get("VersionId"),
+            etag=response.get("ETag"),
+            sha256=response.get("Checksum", {}).get("ChecksumSHA256"),
         )
 
     def start_multipart_operation(self, request):
@@ -142,10 +152,10 @@ class FileCopier:
             Bucket=request.target_bucket,
             Key=request.target_key,
             ChecksumAlgorithm=request.checksum_algorithm,
-            RequestPayer='requester'
+            RequestPayer="requester",
         )
-        #print(f"s3.create_multipart_upload() response: {response}")
-        return response['UploadId']
+        # print(f"s3.create_multipart_upload() response: {response}")
+        return response["UploadId"]
 
     def finish_multipart_operation(self, request, upload_id, parts):
         # complete multipart upload
@@ -153,12 +163,10 @@ class FileCopier:
             Bucket=request.target_bucket,
             Key=request.target_key,
             UploadId=upload_id,
-            MultipartUpload={
-                'Parts': parts
-            },
-            RequestPayer='requester'
+            MultipartUpload={"Parts": parts},
+            RequestPayer="requester",
         )
-        #print(f"s3.complete_multipart_upload() response: {response}")
+        # print(f"s3.complete_multipart_upload() response: {response}")
         return response
 
     def byte_range(self, offset, size):
@@ -181,16 +189,13 @@ class FileCopier:
         response = self.s3.upload_part_copy(
             Bucket=request.target_bucket,
             Key=request.target_key,
-            CopySource={
-                'Bucket': request.source_bucket,
-                'Key': request.source_key
-            },
+            CopySource={"Bucket": request.source_bucket, "Key": request.source_key},
             UploadId=upload_id,
             CopySourceRange=part_range,
             PartNumber=part_number,
-            RequestPayer='requester'
+            RequestPayer="requester",
         )
-        #print(f"s3.upload_part_copy() response: {response}")
+        # print(f"s3.upload_part_copy() response: {response}")
         return response
 
     def copy_parts(self, request, upload_id, parts):
@@ -199,43 +204,51 @@ class FileCopier:
         for part_range in parts:
             part_number += 1
             response = self.copy_part(request, upload_id, part_number, part_range)
-            result = response['CopyPartResult']
-            result['PartNumber'] = part_number
-            del(result['LastModified'])
-            responses.append({
-                'part_number': part_number,
-                'part_range': part_range,
-                'response': response,
-                'result': result})
-            #print(f"copy_parts() result: ${result}")
-        return [response['result'] for response in responses]
+            result = response["CopyPartResult"]
+            result["PartNumber"] = part_number
+            del result["LastModified"]
+            responses.append(
+                {
+                    "part_number": part_number,
+                    "part_range": part_range,
+                    "response": response,
+                    "result": result,
+                }
+            )
+            # print(f"copy_parts() result: ${result}")
+        return [response["result"] for response in responses]
 
     def copy(self, request):
         upload_id = self.start_multipart_operation(request)
-        source_attributes = self.get_object_attributes(request.source_bucket, request.source_key)
+        source_attributes = self.get_object_attributes(
+            request.source_bucket, request.source_key
+        )
         parts = self.generate_part_list(source_attributes.size, self.max_part_size)
         copied_parts = self.copy_parts(request, upload_id, parts)
         response = self.finish_multipart_operation(request, upload_id, copied_parts)
-        #print(f"copy() finish_multipart_operation response: ${response}")
-        target_attributes = self.get_object_attributes(request.target_bucket, request.target_key)
+        # print(f"copy() finish_multipart_operation response: ${response}")
+        target_attributes = self.get_object_attributes(
+            request.target_bucket, request.target_key
+        )
         return CopyResult(
-            source_bucket = source_attributes.bucket,
-            source_key = source_attributes.key,
-            source_size = source_attributes.size,
-            source_version_id = source_attributes.version_id,
-            source_etag = source_attributes.etag,
-            source_sha256 = source_attributes.sha256,
-            target_bucket = target_attributes.bucket,
-            target_key = target_attributes.key,
-            target_size = target_attributes.size,
-            target_version_id = target_attributes.version_id,
-            target_etag = target_attributes.etag,
-            target_sha256 = target_attributes.sha256
+            source_bucket=source_attributes.bucket,
+            source_key=source_attributes.key,
+            source_size=source_attributes.size,
+            source_version_id=source_attributes.version_id,
+            source_etag=source_attributes.etag,
+            source_sha256=source_attributes.sha256,
+            target_bucket=target_attributes.bucket,
+            target_key=target_attributes.key,
+            target_size=target_attributes.size,
+            target_version_id=target_attributes.version_id,
+            target_etag=target_attributes.etag,
+            target_sha256=target_attributes.sha256,
         )
 
 
 # Configure S3 client
 # --------------------------------------------------
+
 
 class ThreadLocalS3Client(threading.local):
     """
@@ -339,6 +352,7 @@ def iter_keys(bucket, prefix):
             for item in page["Contents"]:
                 yield item["Key"]
 
+
 def copy_object(event: CopyEvent):
     """
     Copy an object from the embargo bucket to the release bucket.
@@ -353,18 +367,19 @@ def copy_object(event: CopyEvent):
     )
 
     copy_result = local.file_copier.copy(
-            CopyRequest(
-                source_bucket = event.embargo_bucket,
-                source_key = event.key,
-                target_bucket = event.publish_bucket,
-                target_key = event.key,
-                max_part_size = MULTIPART_COPY_MAX_PART_SIZE,
-                checksum_algorithm = CHECKSUM_ALGORITHM
-            )
+        CopyRequest(
+            source_bucket=event.embargo_bucket,
+            source_key=event.key,
+            target_bucket=event.publish_bucket,
+            target_key=event.key,
+            max_part_size=MULTIPART_COPY_MAX_PART_SIZE,
+            checksum_algorithm=CHECKSUM_ALGORITHM,
         )
+    )
 
     event.log.info(f"Copy result: ${copy_result}")
     return copy_result
+
 
 def delete_object(event: DeleteEvent):
     """
