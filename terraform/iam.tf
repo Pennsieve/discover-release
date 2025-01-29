@@ -132,8 +132,6 @@ data "aws_iam_policy_document" "ecs_task_iam_policy_document" {
       "${data.terraform_remote_state.platform_infrastructure.outputs.discover_embargo_bucket_arn}/*",
       data.terraform_remote_state.platform_infrastructure.outputs.sparc_embargo_bucket_arn,
       "${data.terraform_remote_state.platform_infrastructure.outputs.sparc_embargo_bucket_arn}/*",
-      data.terraform_remote_state.af_south_1.outputs.af_south_s3_bucket_arn,
-      "${data.terraform_remote_state.af_south_1.outputs.af_south_s3_bucket_arn}/*",
     ]
   }
 
@@ -162,6 +160,8 @@ data "aws_iam_policy_document" "ecs_task_iam_policy_document" {
       "${data.terraform_remote_state.platform_infrastructure.outputs.rejoin_embargo50_bucket_arn}/*",
       data.terraform_remote_state.platform_infrastructure.outputs.precision_embargo50_bucket_arn,
       "${data.terraform_remote_state.platform_infrastructure.outputs.precision_embargo50_bucket_arn}/*",
+      data.terraform_remote_state.africa_south_region.outputs.af_south_s3_embargo_bucket_arn,
+      "${data.terraform_remote_state.africa_south_region.outputs.af_south_s3_embargo_bucket_arn}/*",
     ]
   }
 
@@ -207,8 +207,8 @@ data "aws_iam_policy_document" "ecs_task_iam_policy_document" {
       "${data.terraform_remote_state.platform_infrastructure.outputs.rejoin_publish50_bucket_arn}/*",
       data.terraform_remote_state.platform_infrastructure.outputs.precision_publish50_bucket_arn,
       "${data.terraform_remote_state.platform_infrastructure.outputs.precision_publish50_bucket_arn}/*",
-      data.terraform_remote_state.af_south_1.outputs.af_south_s3_bucket_arn,
-      "${data.terraform_remote_state.af_south_1.outputs.af_south_s3_bucket_arn}/*",
+      data.terraform_remote_state.africa_south_region.outputs.af_south_s3_discover_bucket_arn,
+      "${data.terraform_remote_state.africa_south_region.outputs.af_south_s3_discover_bucket_arn}/*",
     ]
   }
 }
