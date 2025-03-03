@@ -12,6 +12,7 @@ import dataclasses
 import json
 import os
 import threading
+import uuid
 from dataclasses import dataclass
 from multiprocessing.dummy import Pool
 from typing import Any
@@ -125,7 +126,8 @@ class CopyResult:
 
 
 class FileCopier:
-    def __init__(self, s3, max_part_size=5 * MB):
+    def __init__(self, logger, s3, max_part_size=5 * MB):
+        self.logger = logger
         self.s3 = s3
         self.max_part_size = max_part_size
 
@@ -140,10 +142,10 @@ class FileCopier:
         return ObjectAttributes(
             bucket=bucket,
             key=key,
-            size=response.get("ObjectSize"),
-            version_id=response.get("VersionId"),
-            etag=response.get("ETag"),
-            sha256=response.get("Checksum", {}).get("ChecksumSHA256"),
+            size=response.get("ObjectSize", 0),
+            version_id=response.get("VersionId", "none"),
+            etag=response.get("ETag", "none"),
+            sha256=response.get("Checksum", {}).get("ChecksumSHA256", "none"),
         )
 
     def start_multipart_operation(self, request):
@@ -219,27 +221,36 @@ class FileCopier:
         return [response["result"] for response in responses]
 
     def copy(self, request):
+        self.logger = self.logger.bind(
+            pennsieve={
+                "source_bucket": request.source_bucket,
+                "source_key": request.source_key,
+                "target_bucket": request.target_bucket,
+                "target_key": request.target_key,
+            }
+        )
         upload_id = self.start_multipart_operation(request)
         source_attributes = self.get_object_attributes(
             request.source_bucket, request.source_key
         )
         parts = self.generate_part_list(source_attributes.size, self.max_part_size)
+        self.logger.info(f"FileCopier.copy() number-of-parts: {len(parts)}")
         copied_parts = self.copy_parts(request, upload_id, parts)
         response = self.finish_multipart_operation(request, upload_id, copied_parts)
-        # print(f"copy() finish_multipart_operation response: ${response}")
+        self.logger.info(f"FileCopier.copy() response: {response}")
         target_attributes = self.get_object_attributes(
             request.target_bucket, request.target_key
         )
         return CopyResult(
             source_bucket=source_attributes.bucket,
             source_key=source_attributes.key,
-            source_size=source_attributes.size,
+            source_size=str(source_attributes.size),
             source_version_id=source_attributes.version_id,
             source_etag=source_attributes.etag,
             source_sha256=source_attributes.sha256,
             target_bucket=target_attributes.bucket,
             target_key=target_attributes.key,
-            target_size=target_attributes.size,
+            target_size=str(target_attributes.size),
             target_version_id=target_attributes.version_id,
             target_etag=target_attributes.etag,
             target_sha256=target_attributes.sha256,
@@ -256,6 +267,9 @@ class ThreadLocalS3Client(threading.local):
     """
 
     def __init__(self, environment):
+        self.local_id = str(uuid.uuid4())
+        self.logger = structlog.get_logger()
+
         if environment == "local":
             s3_url = LOCALSTACK_URL
         else:
@@ -263,7 +277,9 @@ class ThreadLocalS3Client(threading.local):
 
         print("Creating S3 client...")
         self.s3_client = boto3.client("s3", endpoint_url=s3_url)
-        self.file_copier = FileCopier(self.s3_client, MULTIPART_COPY_MAX_PART_SIZE)
+        self.file_copier = FileCopier(
+            self.logger, self.s3_client, MULTIPART_COPY_MAX_PART_SIZE
+        )
 
 
 local = ThreadLocalS3Client(ENVIRONMENT)
@@ -273,7 +289,7 @@ local = ThreadLocalS3Client(ENVIRONMENT)
 # --------------------------------------------------
 
 
-def release_files(s3_key_prefix, embargo_bucket, publish_bucket):
+def release_files(request_id, s3_key_prefix, embargo_bucket, publish_bucket):
     # Ensure the S3 key ends with a '/'
     if not s3_key_prefix.endswith("/"):
         s3_key_prefix = "{}/".format(s3_key_prefix)
@@ -287,6 +303,7 @@ def release_files(s3_key_prefix, embargo_bucket, publish_bucket):
     log = log.bind(
         pennsieve={
             "service_name": SERVICE_NAME,
+            "request_id": request_id,
             "s3_key_prefix": s3_key_prefix,
             "publish_bucket": publish_bucket,
             "embargo_bucket": embargo_bucket,
@@ -392,7 +409,8 @@ def delete_object(event: DeleteEvent):
 
 
 if __name__ == "__main__":
+    request_id = str(uuid.uuid4())
     s3_key_prefix = os.environ["S3_KEY_PREFIX"]
     publish_bucket = os.environ["PUBLISH_BUCKET"]
     embargo_bucket = os.environ["EMBARGO_BUCKET"]
-    release_files(s3_key_prefix, embargo_bucket, publish_bucket)
+    release_files(request_id, s3_key_prefix, embargo_bucket, publish_bucket)
