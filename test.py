@@ -1,5 +1,6 @@
 import os
 import time
+import uuid
 
 import boto3
 import pytest
@@ -64,7 +65,8 @@ def test_copy_files_to_publish_bucket(publish_bucket, embargo_bucket):
     assert sorted(s3_keys(publish_bucket)) == []
     assert sorted(s3_keys(embargo_bucket)) == sorted([s3_key_to_move, s3_key_to_leave])
 
-    release_files(S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
+    request_id = str(uuid.uuid4())
+    release_files(request_id, S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
 
     # VERIFY RESULTS
     release_results_key = os.path.join(
@@ -86,7 +88,8 @@ def test_handle_key_without_trailing_slash(publish_bucket, embargo_bucket):
     assert sorted(s3_keys(publish_bucket)) == []
     assert sorted(s3_keys(embargo_bucket)) == sorted([s3_key_to_move, s3_key_to_leave])
 
-    release_files(S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
+    request_id = str(uuid.uuid4())
+    release_files(request_id, S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
 
     # VERIFY RESULTS
     release_results_key = os.path.join(
@@ -112,7 +115,8 @@ def test_copy_files_pagination(publish_bucket, embargo_bucket):
     assert sorted(s3_keys(publish_bucket)) == []
     assert sorted(s3_keys(embargo_bucket)) == sorted(s3_keys_to_move + s3_keys_to_leave)
 
-    release_files(S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
+    request_id = str(uuid.uuid4())
+    release_files(request_id, S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
 
     # VERIFY RESULTS
     release_results_key = os.path.join(
