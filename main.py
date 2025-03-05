@@ -30,6 +30,8 @@ KB = 1024**1
 MB = 1024**2
 GB = 1024**3
 
+S3_COPY_OBJECT_MAX_SIZE = 5 * GB
+
 MULTIPART_COPY_MAX_PART_SIZE = int(
     os.environ.get("MULTIPART_COPY_MAX_PART_SIZE", 5 * GB)
 )
@@ -136,6 +138,7 @@ class FileCopier:
         self.logger = logger
         self.s3 = s3
         self.max_part_size = max_part_size
+        self.copier_id = str(uuid.uuid4())
 
     def get_object_attributes(self, bucket, key):
         response = self.s3.get_object_attributes(
@@ -162,7 +165,6 @@ class FileCopier:
             ChecksumAlgorithm=request.checksum_algorithm,
             RequestPayer="requester",
         )
-        # print(f"s3.create_multipart_upload() response: {response}")
         return response["UploadId"]
 
     def finish_multipart_operation(self, request, upload_id, parts):
@@ -174,7 +176,6 @@ class FileCopier:
             MultipartUpload={"Parts": parts},
             RequestPayer="requester",
         )
-        # print(f"s3.complete_multipart_upload() response: {response}")
         return response
 
     def byte_range(self, offset, size):
@@ -203,7 +204,6 @@ class FileCopier:
             PartNumber=part_number,
             RequestPayer="requester",
         )
-        # print(f"s3.upload_part_copy() response: {response}")
         return response
 
     def copy_parts(self, request, upload_id, parts):
@@ -223,30 +223,54 @@ class FileCopier:
                     "result": result,
                 }
             )
-            # print(f"copy_parts() result: ${result}")
         return [response["result"] for response in responses]
+
+    def copy_file(self, request):
+        response = self.s3.copy_object(
+            CopySource={"Bucket": request.source_bucket, "Key": request.source_key},
+            Bucket=request.target_bucket,
+            Key=request.target_key,
+            ChecksumAlgorithm=request.checksum_algorithm,
+            RequestPayer="requester",
+        )
+        return response
 
     def copy(self, request):
         self.logger = self.logger.bind(
             pennsieve={
+                "copier_id": self.copier_id,
                 "source_bucket": request.source_bucket,
                 "source_key": request.source_key,
                 "target_bucket": request.target_bucket,
                 "target_key": request.target_key,
             }
         )
-        upload_id = self.start_multipart_operation(request)
+
         source_attributes = self.get_object_attributes(
             request.source_bucket, request.source_key
         )
-        parts = self.generate_part_list(source_attributes.size, self.max_part_size)
-        self.logger.info(f"FileCopier.copy() number-of-parts: {len(parts)}")
-        copied_parts = self.copy_parts(request, upload_id, parts)
-        response = self.finish_multipart_operation(request, upload_id, copied_parts)
-        self.logger.info(f"FileCopier.copy() response: {response}")
+
+        if source_attributes.size <= S3_COPY_OBJECT_MAX_SIZE:
+            self.logger.info(
+                f"FileCopier.copy() performing single-operation copy (key: {request.source_key} size: {source_attributes.size})"
+            )
+            response = self.copy_file(request)
+            self.logger.info(f"FileCopier.copy() response: {response}")
+        else:
+            self.logger.info(
+                f"FileCopier.copy() performing multi-part copy (key: {request.source_key} size: {source_attributes.size})"
+            )
+            upload_id = self.start_multipart_operation(request)
+            parts = self.generate_part_list(source_attributes.size, self.max_part_size)
+            self.logger.info(f"FileCopier.copy() number-of-parts: {len(parts)}")
+            copied_parts = self.copy_parts(request, upload_id, parts)
+            response = self.finish_multipart_operation(request, upload_id, copied_parts)
+            self.logger.info(f"FileCopier.copy() response: {response}")
+
         target_attributes = self.get_object_attributes(
             request.target_bucket, request.target_key
         )
+
         return CopyResult(
             source_bucket=source_attributes.bucket,
             source_key=source_attributes.key,
