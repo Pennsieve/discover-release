@@ -16,6 +16,7 @@ import uuid
 from dataclasses import dataclass
 from multiprocessing.dummy import Pool
 from typing import Any
+from datetime import date, datetime, timedelta
 
 import boto3
 import structlog
@@ -36,6 +37,8 @@ MULTIPART_COPY_MAX_PART_SIZE = int(
 ChecksumAlgorithmSHA256 = "SHA256"
 CHECKSUM_ALGORITHM = os.environ.get("CHECKSUM_ALGORITHM", ChecksumAlgorithmSHA256)
 
+EmbargoResultRetentionDays = 180
+EMBARGO_RESULT_RETENTION_DAYS = int(os.environ.get("EMBARGO_RESULT_RETENTION_DAYS", EmbargoResultRetentionDays))
 
 class EnhancedJSONEncoder(json.JSONEncoder):
     def default(self, o):
@@ -297,6 +300,8 @@ def release_files(request_id, s3_key_prefix, embargo_bucket, publish_bucket):
     assert s3_key_prefix.endswith("/")
     assert len(s3_key_prefix) > 1  # At least one character + slash
 
+    delete_released_files = os.environ.get()
+
     # Create basic pennsieve log context
     log = structlog.get_logger()
     log = log.bind(**{"class": f"{release_files.__module__}.{release_files.__name__}"})
@@ -339,17 +344,29 @@ def release_files(request_id, s3_key_prefix, embargo_bucket, publish_bucket):
         log.error(e, exc_info=True)
         raise
 
-    # serialize copy_results to JSON, and write to a file on S3
     log.info(f"generating copy result JSON ({len(copy_results)} files were copied)")
     json_data = bytes(json.dumps(copy_results, cls=EnhancedJSONEncoder), "utf-8")
     copy_results_key = f"{s3_key_prefix}discover-release-results.json"
-    log.info(f"uploading copy results to s3://{publish_bucket}/{copy_results_key}")
+
+    # the release results are uploaded to the Publish Bucket for the Discover Service to consume
+    log.info(f"uploading copy results to Publish bucket: s3://{publish_bucket}/{copy_results_key}")
     client = ThreadLocalS3Client(ENVIRONMENT)
     put_response = client.s3_client.put_object(
         Bucket=publish_bucket,
         Key=copy_results_key,
         Body=json_data,
         RequestPayer="requester",
+    )
+
+    # the release results are uploaded to the Embargo Bucket for possible audit and recovery
+    expiration = date.today() + timedelta(days = EMBARGO_RESULT_RETENTION_DAYS)
+    log.info(f"uploading copy results to Embargo bucket: s3://{embargo_bucket}/{copy_results_key} (expires: {str(expiration)}")
+    put_response = client.s3_client.put_object(
+        Bucket=embargo_bucket,
+        Key=copy_results_key,
+        Body=json_data,
+        RequestPayer="requester",
+        Expires=expiration
     )
 
 
