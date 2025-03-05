@@ -14,9 +14,9 @@ import os
 import threading
 import uuid
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from multiprocessing.dummy import Pool
 from typing import Any
-from datetime import date, datetime, timedelta
 
 import boto3
 import structlog
@@ -38,7 +38,10 @@ ChecksumAlgorithmSHA256 = "SHA256"
 CHECKSUM_ALGORITHM = os.environ.get("CHECKSUM_ALGORITHM", ChecksumAlgorithmSHA256)
 
 EmbargoResultRetentionDays = 180
-EMBARGO_RESULT_RETENTION_DAYS = int(os.environ.get("EMBARGO_RESULT_RETENTION_DAYS", EmbargoResultRetentionDays))
+EMBARGO_RESULT_RETENTION_DAYS = int(
+    os.environ.get("EMBARGO_RESULT_RETENTION_DAYS", EmbargoResultRetentionDays)
+)
+
 
 class EnhancedJSONEncoder(json.JSONEncoder):
     def default(self, o):
@@ -349,7 +352,9 @@ def release_files(request_id, s3_key_prefix, embargo_bucket, publish_bucket):
     copy_results_key = f"{s3_key_prefix}discover-release-results.json"
 
     # the release results are uploaded to the Publish Bucket for the Discover Service to consume
-    log.info(f"uploading copy results to Publish bucket: s3://{publish_bucket}/{copy_results_key}")
+    log.info(
+        f"uploading copy results to Publish bucket: s3://{publish_bucket}/{copy_results_key}"
+    )
     client = ThreadLocalS3Client(ENVIRONMENT)
     put_response = client.s3_client.put_object(
         Bucket=publish_bucket,
@@ -359,14 +364,16 @@ def release_files(request_id, s3_key_prefix, embargo_bucket, publish_bucket):
     )
 
     # the release results are uploaded to the Embargo Bucket for possible audit and recovery
-    expiration = date.today() + timedelta(days = EMBARGO_RESULT_RETENTION_DAYS)
-    log.info(f"uploading copy results to Embargo bucket: s3://{embargo_bucket}/{copy_results_key} (expires: {str(expiration)}")
+    expiration = date.today() + timedelta(days=EMBARGO_RESULT_RETENTION_DAYS)
+    log.info(
+        f"uploading copy results to Embargo bucket: s3://{embargo_bucket}/{copy_results_key} (expires: {str(expiration)}"
+    )
     put_response = client.s3_client.put_object(
         Bucket=embargo_bucket,
         Key=copy_results_key,
         Body=json_data,
         RequestPayer="requester",
-        Expires=expiration
+        Expires=expiration,
     )
 
 
