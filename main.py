@@ -14,7 +14,7 @@ import os
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from multiprocessing.dummy import Pool
 from typing import Any
 
@@ -303,8 +303,6 @@ def release_files(request_id, s3_key_prefix, embargo_bucket, publish_bucket):
     assert s3_key_prefix.endswith("/")
     assert len(s3_key_prefix) > 1  # At least one character + slash
 
-    delete_released_files = os.environ.get()
-
     # Create basic pennsieve log context
     log = structlog.get_logger()
     log = log.bind(**{"class": f"{release_files.__module__}.{release_files.__name__}"})
@@ -364,7 +362,7 @@ def release_files(request_id, s3_key_prefix, embargo_bucket, publish_bucket):
     )
 
     # the release results are uploaded to the Embargo Bucket for possible audit and recovery
-    expiration = date.today() + timedelta(days=EMBARGO_RESULT_RETENTION_DAYS)
+    expiration = datetime.today() + timedelta(days=EMBARGO_RESULT_RETENTION_DAYS)
     log.info(
         f"uploading copy results to Embargo bucket: s3://{embargo_bucket}/{copy_results_key} (expires: {str(expiration)}"
     )
