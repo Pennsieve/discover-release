@@ -75,7 +75,9 @@ def test_copy_files_to_publish_bucket(publish_bucket, embargo_bucket):
     assert sorted(s3_keys(publish_bucket)) == sorted(
         [s3_key_to_move, release_results_key]
     )
-    assert sorted(s3_keys(embargo_bucket)) == sorted([s3_key_to_leave, release_results_key])
+    assert sorted(s3_keys(embargo_bucket)) == sorted(
+        [s3_key_to_leave, release_results_key]
+    )
 
 
 def test_handle_key_without_trailing_slash(publish_bucket, embargo_bucket):
@@ -99,7 +101,9 @@ def test_handle_key_without_trailing_slash(publish_bucket, embargo_bucket):
     assert sorted(s3_keys(publish_bucket)) == sorted(
         [s3_key_to_move, release_results_key]
     )
-    assert sorted(s3_keys(embargo_bucket)) == sorted([s3_key_to_leave, release_results_key])
+    assert sorted(s3_keys(embargo_bucket)) == sorted(
+        [s3_key_to_leave, release_results_key]
+    )
 
 
 def test_copy_files_pagination(publish_bucket, embargo_bucket):
@@ -125,10 +129,14 @@ def test_copy_files_pagination(publish_bucket, embargo_bucket):
     )
     s3_keys_to_move.append(release_results_key)
     assert sorted(s3_keys(publish_bucket)) == sorted(s3_keys_to_move)
-    assert sorted(s3_keys(embargo_bucket)) == sorted(s3_keys_to_leave + [release_results_key])
+    assert sorted(s3_keys(embargo_bucket)) == sorted(
+        s3_keys_to_leave + [release_results_key]
+    )
 
 
-def test_ensure_embargo_bucket_only_contains_release_results(publish_bucket, embargo_bucket):
+def test_ensure_embargo_bucket_only_contains_release_results(
+    publish_bucket, embargo_bucket
+):
     s3_keys_to_move = create_keys(S3_PREFIX_TO_MOVE, FILENAME, 25)
 
     for key in s3_keys_to_move:
