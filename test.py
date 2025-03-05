@@ -134,9 +134,7 @@ def test_copy_files_pagination(publish_bucket, embargo_bucket):
     )
 
 
-def test_ensure_embargo_bucket_only_contains_release_results(
-    publish_bucket, embargo_bucket
-):
+def test_embargo_bucket_only_contains_release_results(publish_bucket, embargo_bucket):
     s3_keys_to_move = create_keys(S3_PREFIX_TO_MOVE, FILENAME, 25)
 
     for key in s3_keys_to_move:

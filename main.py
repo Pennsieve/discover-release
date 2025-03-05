@@ -440,7 +440,7 @@ def copy_object(event: CopyEvent):
         )
     )
 
-    event.log.info(f"Copy result: ${copy_result}")
+    event.log.info(f"Copy result: {copy_result}")
     return copy_result
 
 
