@@ -238,9 +238,9 @@ def test_manifest_is_rewritten_with_publish_bucket_values(
         ), f"{rel_path} still has the stale embargo sha256"
 
     for rel_path in paths_without_sha256:
-        assert "sha256" not in by_path[rel_path], (
-            f"{rel_path} unexpectedly gained a sha256 field"
-        )
+        assert (
+            "sha256" not in by_path[rel_path]
+        ), f"{rel_path} unexpectedly gained a sha256 field"
 
     # Fields that the rewrite is NOT supposed to touch (name, path, size,
     # fileType, sourcePackageId, and anything else the manifest happens to
@@ -254,9 +254,9 @@ def test_manifest_is_rewritten_with_publish_bucket_values(
         updated = by_path[rel_path]
         for field in pass_through_fields:
             if field in original:
-                assert field in updated, (
-                    f"{rel_path}: pass-through field {field!r} was dropped"
-                )
+                assert (
+                    field in updated
+                ), f"{rel_path}: pass-through field {field!r} was dropped"
                 assert updated[field] == original[field], (
                     f"{rel_path}: pass-through field {field!r} changed from "
                     f"{original[field]!r} to {updated[field]!r}"
@@ -343,9 +343,7 @@ def upload_manifest(embargo_bucket, prefix, file_paths, *, with_sha256=()):
         files.append(entry)
     manifest = {"pennsieveDatasetId": 1234, "version": 1, "files": files}
     key = os.path.join(prefix, MANIFEST_RELATIVE_PATH)
-    embargo_bucket.put_object(
-        Key=key, Body=json.dumps(manifest).encode("utf-8")
-    )
+    embargo_bucket.put_object(Key=key, Body=json.dumps(manifest).encode("utf-8"))
     return key, manifest
 
 

@@ -495,7 +495,7 @@ def release_manifest(
     result_by_path = {}
     for result in copy_results:
         if result.target_key.startswith(s3_key_prefix):
-            relative_path = result.target_key[len(s3_key_prefix):]
+            relative_path = result.target_key[len(s3_key_prefix) :]
             result_by_path[relative_path] = result
 
     # Update s3VersionId and sha256 on each file entry. The manifest's own
