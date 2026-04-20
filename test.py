@@ -54,7 +54,8 @@ def publish_bucket(setup):
 
 @pytest.fixture(scope="function")
 def embargo_bucket(setup):
-    return setup_bucket(EMBARGO_BUCKET, versioned=False)
+    # versioning is on in the pennsieve embargo buckets at least
+    return setup_bucket(EMBARGO_BUCKET, versioned=True)
 
 
 def test_copy_files_to_publish_bucket(publish_bucket, embargo_bucket):
