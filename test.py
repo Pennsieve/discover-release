@@ -2,6 +2,7 @@ import json
 import os
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 import pytest
@@ -18,10 +19,15 @@ S3_PREFIX_TO_MOVE = "10/"
 # Prefix of an unrelated dataset that should remain untouched by the release.
 S3_PREFIX_TO_LEAVE = "100/"
 
-# This is a dummy file
-FILENAME = "test.txt"
-
 MANIFEST_RELATIVE_PATH = "manifest.json"
+
+# Number of objects used by the pagination test. The S3 list page size is
+# 1000, so anything > 1000 exercises pagination.
+PAGINATION_TEST_FILES = int(os.environ.get("PAGINATION_TEST_FILES", 1200))
+
+# Thread pool size for parallel test-setup uploads to LocalStack. Setup-only;
+# does not affect what `release_files` itself does.
+SETUP_UPLOAD_WORKERS = int(os.environ.get("SETUP_UPLOAD_WORKERS", 16))
 
 s3_resource = boto3.resource("s3", endpoint_url=LOCALSTACK_URL)
 
@@ -62,8 +68,8 @@ def test_copy_files_to_publish_bucket(publish_bucket, embargo_bucket):
     s3_key_to_move = os.path.join(S3_PREFIX_TO_MOVE, FILENAME)
     s3_key_to_leave = os.path.join(S3_PREFIX_TO_LEAVE, FILENAME)
 
-    embargo_bucket.upload_file(Filename=FILENAME, Key=s3_key_to_move)
-    embargo_bucket.upload_file(Filename=FILENAME, Key=s3_key_to_leave)
+    upload_dummy(embargo_bucket, s3_key_to_move)
+    upload_dummy(embargo_bucket, s3_key_to_leave)
     manifest_key, _ = upload_manifest(embargo_bucket, S3_PREFIX_TO_MOVE, [FILENAME])
 
     assert sorted(s3_keys(publish_bucket)) == []
@@ -90,8 +96,9 @@ def test_handle_key_without_trailing_slash(publish_bucket, embargo_bucket):
     s3_key_to_move = os.path.join(S3_PREFIX_TO_MOVE, FILENAME)
     s3_key_to_leave = os.path.join(S3_PREFIX_TO_LEAVE, FILENAME)
 
-    embargo_bucket.upload_file(Filename=FILENAME, Key=s3_key_to_move)
-    embargo_bucket.upload_file(Filename=FILENAME, Key=s3_key_to_leave)
+    upload_dummy(embargo_bucket, s3_key_to_move)
+    upload_dummy(embargo_bucket, s3_key_to_leave)
+
     manifest_key, _ = upload_manifest(embargo_bucket, S3_PREFIX_TO_MOVE, [FILENAME])
 
     assert sorted(s3_keys(publish_bucket)) == []
@@ -121,11 +128,8 @@ def test_copy_files_pagination(publish_bucket, embargo_bucket):
     s3_keys_to_move = create_keys(S3_PREFIX_TO_MOVE, FILENAME, 1200)
     s3_keys_to_leave = [os.path.join(S3_PREFIX_TO_LEAVE, FILENAME)]
 
-    for key in s3_keys_to_move:
-        embargo_bucket.upload_file(Filename=FILENAME, Key=key)
-
-    for key in s3_keys_to_leave:
-        embargo_bucket.upload_file(Filename=FILENAME, Key=key)
+    upload_dummies(embargo_bucket, s3_keys_to_move)
+    upload_dummies(embargo_bucket, s3_keys_to_leave)
 
     # The manifest only needs to exist; it doesn't have to enumerate every
     # file in S3 for the release to succeed.
@@ -153,8 +157,7 @@ def test_copy_files_pagination(publish_bucket, embargo_bucket):
 def test_embargo_bucket_only_contains_release_results(publish_bucket, embargo_bucket):
     s3_keys_to_move = create_keys(S3_PREFIX_TO_MOVE, FILENAME, 25)
 
-    for key in s3_keys_to_move:
-        embargo_bucket.upload_file(Filename=FILENAME, Key=key)
+    upload_dummies(embargo_bucket, s3_keys_to_move)
 
     manifest_key, _ = upload_manifest(embargo_bucket, S3_PREFIX_TO_MOVE, [])
 
@@ -189,10 +192,10 @@ def test_manifest_is_rewritten_with_publish_bucket_values(
     paths_without_sha256 = ["banner.jpg", "readme.md"]
     relative_paths = paths_with_sha256 + paths_without_sha256
 
-    for rel_path in relative_paths:
-        embargo_bucket.upload_file(
-            Filename=FILENAME, Key=os.path.join(S3_PREFIX_TO_MOVE, rel_path)
-        )
+    upload_dummies(
+        embargo_bucket,
+        [os.path.join(S3_PREFIX_TO_MOVE, rel_path) for rel_path in relative_paths],
+    )
 
     manifest_key, original_manifest = upload_manifest(
         embargo_bucket,
@@ -273,7 +276,7 @@ def test_release_aborts_when_manifest_missing(publish_bucket, embargo_bucket):
     bucket files in place so the operator can fix the dataset and retry.
     """
     s3_key = os.path.join(S3_PREFIX_TO_MOVE, FILENAME)
-    embargo_bucket.upload_file(Filename=FILENAME, Key=s3_key)
+    upload_dummy(embargo_bucket, s3_key)
 
     request_id = str(uuid.uuid4())
     with pytest.raises(FileNotFoundError):
@@ -292,7 +295,7 @@ def test_release_aborts_when_manifest_references_missing_file(
     correct the dataset and retry.
     """
     present_key = os.path.join(S3_PREFIX_TO_MOVE, FILENAME)
-    embargo_bucket.upload_file(Filename=FILENAME, Key=present_key)
+    upload_dummy(embargo_bucket, present_key)
 
     # Manifest references the uploaded file AND a file that was never uploaded.
     missing_rel_path = "files/never_uploaded.txt"
@@ -346,6 +349,40 @@ def upload_manifest(embargo_bucket, prefix, file_paths, *, with_sha256=()):
     key = os.path.join(prefix, MANIFEST_RELATIVE_PATH)
     embargo_bucket.put_object(Key=key, Body=json.dumps(manifest).encode("utf-8"))
     return key, manifest
+
+
+# This is a dummy file
+FILENAME = "test.txt"
+
+# Test fixture body. Small enough that put_object is faster than upload_file
+# (which goes through the transfer manager). The actual content doesn't
+# matter for any current test.
+DUMMY_BODY = b"This is a test!\n"
+
+
+def upload_dummy(bucket, key):
+    """
+    Upload a single small object. Uses put_object rather than upload_file to
+    skip the s3transfer manager's threshold/multipart machinery, which is
+    overkill for a 16-byte payload and adds measurable per-call overhead
+    against LocalStack on Docker Desktop.
+    """
+    bucket.put_object(Key=key, Body=DUMMY_BODY)
+
+
+def upload_dummies(bucket, keys):
+    """
+    Upload many small objects in parallel. The bottleneck against LocalStack
+    on Docker Desktop is round-trip latency per request, not bandwidth or
+    CPU, so a thread pool collapses most of the wall time. Setup-only; does
+    not affect what's under test.
+    """
+    if not keys:
+        return
+    with ThreadPoolExecutor(max_workers=SETUP_UPLOAD_WORKERS) as executor:
+        # list() forces iteration so exceptions surface here rather than
+        # being silently swallowed by the executor.
+        list(executor.map(lambda k: upload_dummy(bucket, k), keys))
 
 
 def setup_bucket(bucket_name, versioned):

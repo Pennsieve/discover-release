@@ -58,11 +58,6 @@ EMBARGO_RESULT_RETENTION_DAYS = int(
 # `size` entry is patched to match the rewritten byte count.
 MANIFEST_FILENAME = "manifest.json"
 
-# Maximum iterations to converge on the manifest's self-referenced `size`
-# field. Each pass changes the integer representation of `size` by at most
-# one digit, so this converges in 2-3 iterations in practice.
-MANIFEST_SIZE_MAX_ITERATIONS = 10
-
 
 class EnhancedJSONEncoder(json.JSONEncoder):
     def default(self, o):
@@ -198,7 +193,7 @@ class FileCopier:
         return response
 
     def byte_range(self, offset, size):
-        return f"bytes={offset}-{offset+size-1}"
+        return f"bytes={offset}-{offset + size - 1}"
 
     def generate_part_list(self, object_size, max_part_size):
         parts = []
@@ -541,25 +536,11 @@ def release_manifest(
         )
 
     # Patch the manifest's own `size` so it matches the byte count of the
-    # rewritten manifest. Setting `size` changes the byte count, so iterate
-    # to a fixed point. The integer representation of `size` grows by at
-    # most one digit per iteration, so this converges in 2-3 passes.
+    # rewritten manifest.
     if manifest_self_entry is not None:
-        manifest_self_entry["size"] = 0
-        modified_body = json.dumps(manifest, indent=2).encode("utf-8")
-        for _ in range(MANIFEST_SIZE_MAX_ITERATIONS):
-            actual_size = len(modified_body)
-            if manifest_self_entry["size"] == actual_size:
-                break
-            manifest_self_entry["size"] = actual_size
-            modified_body = json.dumps(manifest, indent=2).encode("utf-8")
-        else:
-            log.warning(
-                f"manifest.json size did not converge after {MANIFEST_SIZE_MAX_ITERATIONS} "
-                f"iterations: reported {manifest_self_entry['size']} vs actual {len(modified_body)}"
-            )
-    else:
-        modified_body = json.dumps(manifest, indent=2).encode("utf-8")
+        set_manifest_size(manifest_self_entry, manifest)
+
+    modified_body = serialize_manifest(manifest)
 
     log.info(
         f"uploading modified manifest.json to s3://{publish_bucket}/{manifest_key} "
@@ -594,6 +575,22 @@ def release_manifest(
         target_etag=target_attrs.etag,
         target_sha256=target_attrs.sha256,
     )
+
+
+def serialize_manifest(manifest):
+    return json.dumps(manifest, indent=2).encode("utf-8")
+
+
+def set_manifest_size(manifest_self_entry, manifest):
+    manifest_self_entry["size"] = 0
+    # subtract one byte for length of 0 character
+    manifest_len_no_size = len(serialize_manifest(manifest)) - 1
+    len_of_size = len(str(manifest_len_no_size))
+    size = manifest_len_no_size + len_of_size
+    # needs adjustment if we are at a power of 10
+    if len(str(size)) > len_of_size:
+        size += 1
+    manifest_self_entry["size"] = size
 
 
 def iter_keys(bucket, prefix):

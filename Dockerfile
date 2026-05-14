@@ -32,4 +32,4 @@ COPY requirements-test.txt ./
 
 RUN python3 -m pip install -r requirements-test.txt
 
-COPY main.py test.py test.txt ./
+COPY main.py test.py ./
