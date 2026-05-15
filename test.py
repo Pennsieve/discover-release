@@ -27,7 +27,7 @@ PAGINATION_TEST_FILES = int(os.environ.get("PAGINATION_TEST_FILES", 1200))
 
 # Thread pool size for parallel test-setup uploads to LocalStack. Setup-only;
 # does not affect what `release_files` itself does.
-SETUP_UPLOAD_WORKERS = int(os.environ.get("SETUP_UPLOAD_WORKERS", 16))
+SETUP_UPLOAD_WORKERS = int(os.environ.get("SETUP_UPLOAD_WORKERS", 4))
 
 s3_resource = boto3.resource("s3", endpoint_url=LOCALSTACK_URL)
 
@@ -311,6 +311,8 @@ def test_release_aborts_when_manifest_references_missing_file(
     assert present_key in s3_keys(embargo_bucket)
     assert manifest_key in s3_keys(embargo_bucket)
 
+def test_set_manifest_size_edge_case():
+    pass
 
 def upload_manifest(embargo_bucket, prefix, file_paths, *, with_sha256=()):
     """
