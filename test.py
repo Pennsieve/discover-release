@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import boto3
 import pytest
 
-from main import LOCALSTACK_URL, release_files
+from main import LOCALSTACK_URL, release_files, serialize_manifest, set_manifest_size
 
 PUBLISH_BUCKET = "test-publish-bucket"
 EMBARGO_BUCKET = "test-embargo-bucket"
@@ -311,8 +311,59 @@ def test_release_aborts_when_manifest_references_missing_file(
     assert present_key in s3_keys(embargo_bucket)
     assert manifest_key in s3_keys(embargo_bucket)
 
-def test_set_manifest_size_edge_case():
-    pass
+
+def test_set_manifest_size_matches_serialized_length_across_range():
+    """
+    manifest.json carries a self-referencing `size`: the byte count of the
+    file is itself a value inside the file, so writing a longer number
+    changes the byte count it's supposed to describe. set_manifest_size
+    handles this by estimating the size-digit count and adding 1 when the
+    estimate is too low.
+
+    The estimate is too low precisely when the size value crosses a power
+    of 10. For example, if everything except the size occupies 997 bytes,
+    the naive estimate is 997 + len("997") = 1000 -- but "1000" is FOUR
+    digits, not three, so the manifest is really 997 + 4 = 1001 bytes.
+    Without the +1, set_manifest_size would record 1000 in a 1001-byte
+    file.
+
+    Sweeping a range of manifest sizes that spans the 10^3-byte boundary
+    exercises both the adjustment case and the non-adjustment cases on
+    either side of it. For every size, the recorded value must match the
+    actual serialized byte count.
+    """
+
+    def _make_padded_manifest(padding_length):
+        """
+        Build a minimal manifest with a single self-entry plus a padding field
+        of the requested character length. Padding goes on a sibling top-level
+        field, not the self-entry, so the self-entry's own structure (and
+        therefore which fields set_manifest_size will and won't touch) is the
+        same regardless of how big we make the surrounding manifest.
+        """
+        manifest_json_entry = {
+            "name": "manifest.json",
+            "path": MANIFEST_RELATIVE_PATH,
+            "size": 0,
+            "fileType": "Json",
+        }
+        return {
+            "padding": "x" * padding_length,
+            "files": [manifest_json_entry],
+        }
+
+    for padding_len in range(0, 1100):
+        manifest = _make_padded_manifest(padding_len)
+        self_entry = manifest["files"][0]
+
+        set_manifest_size(self_entry, manifest)
+
+        actual = len(serialize_manifest(manifest))
+        assert self_entry["size"] == actual, (
+            f"padding_len={padding_len}: set_manifest_size recorded "
+            f"size={self_entry['size']} but actual serialized length is {actual}"
+        )
+
 
 def upload_manifest(embargo_bucket, prefix, file_paths, *, with_sha256=()):
     """
