@@ -452,8 +452,7 @@ def release_manifest(
     The manifest's own entry in `files` is left without a fresh
     `s3VersionId` or `sha256` (a manifest cannot reference its own
     post-upload values), but its `size` IS patched to match the byte count
-    of the rewritten manifest (converged iteratively because writing the
-    size into the manifest changes the byte count).
+    of the rewritten manifest.
 
     Raises FileNotFoundError if the manifest is missing under `manifest_key`,
     or if the manifest references files that were not copied (i.e. are not
@@ -473,11 +472,8 @@ def release_manifest(
         )
     except ClientError as e:
         if e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404", "NotFound"):
-            log.error(
-                f"manifest.json not found at s3://{embargo_bucket}/{manifest_key}; aborting release"
-            )
             raise FileNotFoundError(
-                f"required manifest.json not found at s3://{embargo_bucket}/{manifest_key}"
+                f"required {MANIFEST_FILENAME} not found at s3://{embargo_bucket}/{manifest_key}"
             ) from e
         raise
 
@@ -498,26 +494,29 @@ def release_manifest(
     updated_version_ids = 0
     updated_sha256s = 0
     missing_paths = []
-    manifest_self_entry = None
     for file_entry in manifest.get("files", []):
-        path = file_entry.get("path")
+        path = get_file_entry_path_or_fail(file_entry)
         if path == MANIFEST_FILENAME:
-            manifest_self_entry = file_entry
-            continue
-        if not path:
+            # the manifest's own entry does not have S3 versionId or sha256
             continue
         result = result_by_path.get(path)
         if result is None:
             missing_paths.append(path)
             continue
 
-        if result.target_version_id and result.target_version_id != "none":
-            file_entry["s3VersionId"] = result.target_version_id
-            updated_version_ids += 1
+        # get_object_attributes uses "none" as a sentinel for missing values
+        if not result.target_version_id or result.target_version_id == "none":
+            raise ValueError(
+                f"copy result for {path} missing required target_version_id: {result}"
+            )
+
+        file_entry["s3VersionId"] = result.target_version_id
+        updated_version_ids += 1
 
         # Only rewrite sha256 on entries that already have one. Adding it
         # to entries that didn't have it would change the manifest's
         # schema for those files, which is out of scope here.
+        # get_object_attributes uses "none" as a sentinel for missing values.
         if "sha256" in file_entry:
             if result.target_sha256 and result.target_sha256 != "none":
                 file_entry["sha256"] = result.target_sha256
@@ -526,19 +525,14 @@ def release_manifest(
     if missing_paths:
         preview = missing_paths[:5]
         suffix = "..." if len(missing_paths) > 5 else ""
-        log.error(
-            f"manifest.json references {len(missing_paths)} file(s) that are not present "
-            f"in the embargo bucket under {s3_key_prefix}: {preview}{suffix}; aborting release"
-        )
         raise FileNotFoundError(
-            f"manifest.json references {len(missing_paths)} file(s) that are not present "
+            f"{MANIFEST_FILENAME} references {len(missing_paths)} file(s) that are not present "
             f"in the embargo bucket under {s3_key_prefix}: {preview}{suffix}"
         )
 
     # Patch the manifest's own `size` so it matches the byte count of the
     # rewritten manifest.
-    if manifest_self_entry is not None:
-        set_manifest_size(manifest_self_entry, manifest)
+    set_manifest_size(manifest)
 
     modified_body = serialize_manifest(manifest)
 
@@ -577,11 +571,28 @@ def release_manifest(
     )
 
 
+def get_file_entry_path_or_fail(file_entry):
+    path = file_entry.get("path")
+    if not path:
+        raise ValueError(
+            f"manifest.json file entry missing required 'path' field: {file_entry}"
+        )
+    return path
+
+
 def serialize_manifest(manifest):
     return json.dumps(manifest, indent=2).encode("utf-8")
 
 
-def set_manifest_size(manifest_self_entry, manifest):
+def set_manifest_size(manifest):
+    manifest_self_entry = None
+    for file_entry in manifest.get("files", []):
+        if get_file_entry_path_or_fail(file_entry) == MANIFEST_FILENAME:
+            manifest_self_entry = file_entry
+            break
+    if manifest_self_entry is None:
+        raise ValueError(f"{MANIFEST_FILENAME} file is missing entry for self")
+
     manifest_self_entry["size"] = 0
     # subtract one byte for length of 0 character
     manifest_len_no_size = len(serialize_manifest(manifest)) - 1

@@ -7,7 +7,13 @@ from concurrent.futures import ThreadPoolExecutor
 import boto3
 import pytest
 
-from main import LOCALSTACK_URL, release_files, serialize_manifest, set_manifest_size
+from main import (
+    LOCALSTACK_URL,
+    MANIFEST_FILENAME,
+    release_files,
+    serialize_manifest,
+    set_manifest_size,
+)
 
 PUBLISH_BUCKET = "test-publish-bucket"
 EMBARGO_BUCKET = "test-embargo-bucket"
@@ -19,7 +25,7 @@ S3_PREFIX_TO_MOVE = "10/"
 # Prefix of an unrelated dataset that should remain untouched by the release.
 S3_PREFIX_TO_LEAVE = "100/"
 
-MANIFEST_RELATIVE_PATH = "manifest.json"
+MANIFEST_RELATIVE_PATH = MANIFEST_FILENAME
 
 # Number of objects used by the pagination test. The S3 list page size is
 # 1000, so anything > 1000 exercises pagination.
@@ -70,7 +76,9 @@ def test_copy_files_to_publish_bucket(publish_bucket, embargo_bucket):
 
     upload_dummy(embargo_bucket, s3_key_to_move)
     upload_dummy(embargo_bucket, s3_key_to_leave)
-    manifest_key, _ = upload_manifest(embargo_bucket, S3_PREFIX_TO_MOVE, [FILENAME])
+    manifest_key, _ = create_and_upload_manifest(
+        embargo_bucket, S3_PREFIX_TO_MOVE, [FILENAME]
+    )
 
     assert sorted(s3_keys(publish_bucket)) == []
     assert sorted(s3_keys(embargo_bucket)) == sorted(
@@ -99,7 +107,9 @@ def test_handle_key_without_trailing_slash(publish_bucket, embargo_bucket):
     upload_dummy(embargo_bucket, s3_key_to_move)
     upload_dummy(embargo_bucket, s3_key_to_leave)
 
-    manifest_key, _ = upload_manifest(embargo_bucket, S3_PREFIX_TO_MOVE, [FILENAME])
+    manifest_key, _ = create_and_upload_manifest(
+        embargo_bucket, S3_PREFIX_TO_MOVE, [FILENAME]
+    )
 
     assert sorted(s3_keys(publish_bucket)) == []
     assert sorted(s3_keys(embargo_bucket)) == sorted(
@@ -133,7 +143,7 @@ def test_copy_files_pagination(publish_bucket, embargo_bucket):
 
     # The manifest only needs to exist; it doesn't have to enumerate every
     # file in S3 for the release to succeed.
-    manifest_key, _ = upload_manifest(embargo_bucket, S3_PREFIX_TO_MOVE, [])
+    manifest_key, _ = create_and_upload_manifest(embargo_bucket, S3_PREFIX_TO_MOVE, [])
 
     assert sorted(s3_keys(publish_bucket)) == []
     assert sorted(s3_keys(embargo_bucket)) == sorted(
@@ -159,7 +169,7 @@ def test_embargo_bucket_only_contains_release_results(publish_bucket, embargo_bu
 
     upload_dummies(embargo_bucket, s3_keys_to_move)
 
-    manifest_key, _ = upload_manifest(embargo_bucket, S3_PREFIX_TO_MOVE, [])
+    manifest_key, _ = create_and_upload_manifest(embargo_bucket, S3_PREFIX_TO_MOVE, [])
 
     assert sorted(s3_keys(publish_bucket)) == []
     assert sorted(s3_keys(embargo_bucket)) == sorted(s3_keys_to_move + [manifest_key])
@@ -197,7 +207,7 @@ def test_manifest_is_rewritten_with_publish_bucket_values(
         [os.path.join(S3_PREFIX_TO_MOVE, rel_path) for rel_path in relative_paths],
     )
 
-    manifest_key, original_manifest = upload_manifest(
+    manifest_key, original_manifest = create_and_upload_manifest(
         embargo_bucket,
         S3_PREFIX_TO_MOVE,
         relative_paths,
@@ -212,6 +222,18 @@ def test_manifest_is_rewritten_with_publish_bucket_values(
         s3_resource.Object(PUBLISH_BUCKET, manifest_key).get()["Body"].read()
     )
     published_manifest = json.loads(published_body)
+
+    # all non-files keys should still be present and same as original.
+    for key in original_manifest:
+        if key == "files":
+            continue
+        assert key in published_manifest, f"top-level key {key!r} was dropped"
+        assert published_manifest[key] == original_manifest[key], (
+            f"top-level key {key!r} changed from "
+            f"{original_manifest[key]!r} to {published_manifest[key]!r}"
+        )
+
+    # check the files entries have been updated correctly
     by_path = {entry["path"]: entry for entry in published_manifest["files"]}
 
     # The manifest's own entry should not carry s3VersionId or sha256...
@@ -299,7 +321,7 @@ def test_release_aborts_when_manifest_references_missing_file(
 
     # Manifest references the uploaded file AND a file that was never uploaded.
     missing_rel_path = "files/never_uploaded.txt"
-    manifest_key, _ = upload_manifest(
+    manifest_key, _ = create_and_upload_manifest(
         embargo_bucket, S3_PREFIX_TO_MOVE, [FILENAME, missing_rel_path]
     )
 
@@ -308,6 +330,70 @@ def test_release_aborts_when_manifest_references_missing_file(
         release_files(request_id, S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
 
     # Embargo should still contain everything we put in it.
+    assert present_key in s3_keys(embargo_bucket)
+    assert manifest_key in s3_keys(embargo_bucket)
+
+
+def test_release_aborts_when_manifest_file_entry_missing_path(
+    publish_bucket, embargo_bucket
+):
+    """
+    If a manifest entry is missing its `path`, the release must abort and
+    leave embargo untouched so the operator can correct the dataset.
+    """
+    present_key = os.path.join(S3_PREFIX_TO_MOVE, FILENAME)
+    upload_dummy(embargo_bucket, present_key)
+
+    manifest = create_manifest([FILENAME])
+    manifest["files"].append(
+        {
+            "name": "orphan.txt",
+            "size": 10,
+            "fileType": "Text",
+            "s3VersionId": "stale-version-pathless",
+            # deliberately no "path" key
+        }
+    )
+    manifest_key = upload_manifest(
+        embargo_bucket,
+        S3_PREFIX_TO_MOVE,
+        manifest,
+    )
+
+    request_id = str(uuid.uuid4())
+    with pytest.raises(ValueError):
+        release_files(request_id, S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
+
+    assert present_key in s3_keys(embargo_bucket)
+    assert manifest_key in s3_keys(embargo_bucket)
+
+
+def test_release_aborts_when_manifest_self_entry_missing(
+    publish_bucket, embargo_bucket
+):
+    """
+    If a manifest is missing its own entry, the release must abort and
+    leave embargo untouched so the operator can correct the dataset.
+    """
+    present_key = os.path.join(S3_PREFIX_TO_MOVE, FILENAME)
+    upload_dummy(embargo_bucket, present_key)
+
+    manifest = create_manifest([FILENAME])
+    manifest["files"] = [
+        file_entry
+        for file_entry in manifest["files"]
+        if file_entry["path"] != MANIFEST_RELATIVE_PATH
+    ]
+    manifest_key = upload_manifest(
+        embargo_bucket,
+        S3_PREFIX_TO_MOVE,
+        manifest,
+    )
+
+    request_id = str(uuid.uuid4())
+    with pytest.raises(ValueError):
+        release_files(request_id, S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
+
     assert present_key in s3_keys(embargo_bucket)
     assert manifest_key in s3_keys(embargo_bucket)
 
@@ -354,9 +440,9 @@ def test_set_manifest_size_matches_serialized_length_across_range():
 
     for padding_len in range(0, 1100):
         manifest = _make_padded_manifest(padding_len)
-        self_entry = manifest["files"][0]
 
-        set_manifest_size(self_entry, manifest)
+        set_manifest_size(manifest)
+        self_entry = manifest["files"][0]
 
         actual = len(serialize_manifest(manifest))
         assert self_entry["size"] == actual, (
@@ -365,16 +451,16 @@ def test_set_manifest_size_matches_serialized_length_across_range():
         )
 
 
-def upload_manifest(embargo_bucket, prefix, file_paths, *, with_sha256=()):
+def create_manifest(file_paths, *, with_sha256=()):
     """
-    Build and upload a minimal manifest.json under `prefix` referencing the
+    Build a minimal manifest.json referencing the
     given relative file paths. `with_sha256` lists the paths that should
     receive a (stale) sha256 field; those entries also get a
     sourcePackageId, mimicking the production manifest format where
     user-uploaded files carry both a sha256 and a sourcePackageId while
     system-generated files carry neither.
 
-    Returns a (key, manifest_dict) tuple so callers can assert that
+    Returns a manifest_dict so callers can assert that
     pass-through fields on the rewritten manifest still match the original.
     """
     sha256_paths = set(with_sha256)
@@ -399,8 +485,34 @@ def upload_manifest(embargo_bucket, prefix, file_paths, *, with_sha256=()):
             entry["sourcePackageId"] = f"N:package:fake-package-{i}"
         files.append(entry)
     manifest = {"pennsieveDatasetId": 1234, "version": 1, "files": files}
+    return manifest
+
+
+def upload_manifest(embargo_bucket, prefix, manifest):
+    """
+    Uploads the given manifest.json under `prefix`.
+
+    Returns the key.
+    """
     key = os.path.join(prefix, MANIFEST_RELATIVE_PATH)
     embargo_bucket.put_object(Key=key, Body=json.dumps(manifest).encode("utf-8"))
+    return key
+
+
+def create_and_upload_manifest(embargo_bucket, prefix, file_paths, *, with_sha256=()):
+    """
+    Build and upload a minimal manifest.json under `prefix` referencing the
+    given relative file paths. `with_sha256` lists the paths that should
+    receive a (stale) sha256 field; those entries also get a
+    sourcePackageId, mimicking the production manifest format where
+    user-uploaded files carry both a sha256 and a sourcePackageId while
+    system-generated files carry neither.
+
+    Returns a (key, manifest_dict) tuple so callers can assert that
+    pass-through fields on the rewritten manifest still match the original.
+    """
+    manifest = create_manifest(file_paths, with_sha256=with_sha256)
+    key = upload_manifest(embargo_bucket, prefix, manifest)
     return key, manifest
 
 
