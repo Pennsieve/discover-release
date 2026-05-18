@@ -6,6 +6,13 @@ discover-release
 Fargate task to move files from the embargo bucket to the public Discover bucket.
 Once all files are moved, the files are deleted from the embargo bucket.
 
+Before the dataset manifest (manifest.json) is copied to the publish bucket, it
+is rewritten so that each file entry's `s3VersionId` (and `sha256`, where
+present) points at the values assigned by the publish bucket. The manifest's
+own `size` is also patched to reflect the rewritten byte count. The release is
+aborted if the manifest is missing so that embargo files can be left in place
+for inspection and retry.
+
 """
 
 import dataclasses
@@ -20,6 +27,7 @@ from typing import Any
 
 import boto3
 import structlog
+from botocore.exceptions import ClientError
 
 ENVIRONMENT = os.environ["ENVIRONMENT"]
 SERVICE_NAME = os.environ["SERVICE_NAME"]
@@ -43,6 +51,12 @@ EmbargoResultRetentionDays = 180
 EMBARGO_RESULT_RETENTION_DAYS = int(
     os.environ.get("EMBARGO_RESULT_RETENTION_DAYS", EmbargoResultRetentionDays)
 )
+
+# The dataset manifest is copied with modifications: its `files[].s3VersionId`
+# (and `files[].sha256`, where present) entries are rewritten with the values
+# assigned by the publish bucket after each file is copied, and its own
+# `size` entry is patched to match the rewritten byte count.
+MANIFEST_FILENAME = "manifest.json"
 
 
 class EnhancedJSONEncoder(json.JSONEncoder):
@@ -179,7 +193,7 @@ class FileCopier:
         return response
 
     def byte_range(self, offset, size):
-        return f"bytes={offset}-{offset+size-1}"
+        return f"bytes={offset}-{offset + size - 1}"
 
     def generate_part_list(self, object_size, max_part_size):
         parts = []
@@ -274,13 +288,13 @@ class FileCopier:
         return CopyResult(
             source_bucket=source_attributes.bucket,
             source_key=source_attributes.key,
-            source_size=str(source_attributes.size),
+            source_size=source_attributes.size,
             source_version_id=source_attributes.version_id,
             source_etag=source_attributes.etag,
             source_sha256=source_attributes.sha256,
             target_bucket=target_attributes.bucket,
             target_key=target_attributes.key,
-            target_size=str(target_attributes.size),
+            target_size=target_attributes.size,
             target_version_id=target_attributes.version_id,
             target_etag=target_attributes.etag,
             target_sha256=target_attributes.sha256,
@@ -342,20 +356,43 @@ def release_files(request_id, s3_key_prefix, embargo_bucket, publish_bucket):
 
     log.info(f"boto3 version: {boto3.__version__}")
 
+    # Full S3 key of the dataset manifest, e.g. "10/manifest.json".
+    manifest_key = f"{s3_key_prefix}{MANIFEST_FILENAME}"
+
     copy_results = []
     try:
         log.info("Starting thread pool")
 
         with Pool(processes=4) as pool:
+            # Copy every file EXCEPT the dataset manifest. The manifest is
+            # handled separately below so its s3VersionId/sha256 references
+            # can be rewritten with the values assigned by the publish bucket.
             for copy_result in pool.imap_unordered(
                 copy_object,
                 (
                     CopyEvent(embargo_bucket, publish_bucket, key, log)
                     for key in iter_keys(embargo_bucket, s3_key_prefix)
+                    if key != manifest_key
                 ),
             ):
                 copy_results.append(copy_result)
 
+            # Rewrite manifest.json with the new version IDs / checksums and
+            # upload the modified bytes to the publish bucket. If the manifest
+            # is missing this raises FileNotFoundError, which propagates out
+            # of the `try` BEFORE the delete pool runs, leaving embargo
+            # untouched so the release can be inspected and retried.
+            manifest_result = release_manifest(
+                embargo_bucket=embargo_bucket,
+                publish_bucket=publish_bucket,
+                manifest_key=manifest_key,
+                s3_key_prefix=s3_key_prefix,
+                copy_results=copy_results,
+                log=log,
+            )
+            copy_results.append(manifest_result)
+
+            # Delete everything (including the original manifest) from embargo.
             for _ in pool.imap_unordered(
                 delete_object,
                 (
@@ -397,6 +434,174 @@ def release_files(request_id, s3_key_prefix, embargo_bucket, publish_bucket):
         RequestPayer="requester",
         Expires=expiration,
     )
+
+
+def release_manifest(
+    embargo_bucket, publish_bucket, manifest_key, s3_key_prefix, copy_results, log
+):
+    """
+    Download manifest.json from the embargo bucket and rewrite each file
+    entry so that:
+
+      * `s3VersionId` reflects the version ID assigned by the publish bucket
+        for that file (taken from the `copy_results` produced by the copy
+        pool).
+      * `sha256` (when already present on the entry) reflects the SHA256
+        checksum reported by the publish bucket for that file.
+
+    The manifest's own entry in `files` is left without a fresh
+    `s3VersionId` or `sha256` (a manifest cannot reference its own
+    post-upload values), but its `size` IS patched to match the byte count
+    of the rewritten manifest.
+
+    Raises FileNotFoundError if the manifest is missing under `manifest_key`,
+    or if the manifest references files that were not copied (i.e. are not
+    present in the embargo bucket). Either condition aborts the release
+    without deleting anything from embargo so the operator can fix the
+    dataset and retry.
+
+    Returns a CopyResult describing the manifest upload.
+    """
+    s3 = local.s3_client
+
+    try:
+        response = s3.get_object(
+            Bucket=embargo_bucket,
+            Key=manifest_key,
+            RequestPayer="requester",
+        )
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404", "NotFound"):
+            raise FileNotFoundError(
+                f"required {MANIFEST_FILENAME} not found at s3://{embargo_bucket}/{manifest_key}"
+            ) from e
+        raise
+
+    manifest = json.loads(response["Body"].read())
+
+    # Manifest file paths are relative to the dataset root (e.g.
+    # "files/sin_wave.edf") whereas S3 keys include the dataset prefix
+    # (e.g. "10/files/sin_wave.edf"). Strip the prefix to build a
+    # `relative_path -> CopyResult` map.
+    result_by_path = {}
+    for result in copy_results:
+        if result.target_key.startswith(s3_key_prefix):
+            relative_path = result.target_key[len(s3_key_prefix) :]
+            result_by_path[relative_path] = result
+
+    # Update s3VersionId and sha256 on each file entry. The manifest's own
+    # entry is skipped here; its `size` is patched separately below.
+    updated_version_ids = 0
+    updated_sha256s = 0
+    missing_paths = []
+    for file_entry in manifest.get("files", []):
+        path = get_file_entry_path_or_fail(file_entry)
+        if path == MANIFEST_FILENAME:
+            # the manifest's own entry does not have S3 versionId or sha256
+            continue
+        result = result_by_path.get(path)
+        if result is None:
+            missing_paths.append(path)
+            continue
+
+        # get_object_attributes uses "none" as a sentinel for missing values
+        if not result.target_version_id or result.target_version_id == "none":
+            raise ValueError(
+                f"copy result for {path} missing required target_version_id: {result}"
+            )
+
+        file_entry["s3VersionId"] = result.target_version_id
+        updated_version_ids += 1
+
+        # Only rewrite sha256 on entries that already have one. Adding it
+        # to entries that didn't have it would change the manifest's
+        # schema for those files, which is out of scope here.
+        # get_object_attributes uses "none" as a sentinel for missing values.
+        if "sha256" in file_entry:
+            if result.target_sha256 and result.target_sha256 != "none":
+                file_entry["sha256"] = result.target_sha256
+                updated_sha256s += 1
+
+    if missing_paths:
+        preview = missing_paths[:5]
+        suffix = "..." if len(missing_paths) > 5 else ""
+        raise FileNotFoundError(
+            f"{MANIFEST_FILENAME} references {len(missing_paths)} file(s) that are not present "
+            f"in the embargo bucket under {s3_key_prefix}: {preview}{suffix}"
+        )
+
+    # Patch the manifest's own `size` so it matches the byte count of the
+    # rewritten manifest.
+    set_manifest_size(manifest)
+
+    modified_body = serialize_manifest(manifest)
+
+    log.info(
+        f"uploading modified manifest.json to s3://{publish_bucket}/{manifest_key} "
+        f"(rewrote {updated_version_ids} s3VersionId, {updated_sha256s} sha256, "
+        f"{len(modified_body)} bytes)"
+    )
+
+    s3.put_object(
+        Bucket=publish_bucket,
+        Key=manifest_key,
+        Body=modified_body,
+        ChecksumAlgorithm=CHECKSUM_ALGORITHM,
+        RequestPayer="requester",
+    )
+
+    # Capture attributes for the release-results summary so the manifest
+    # appears alongside every other file.
+    source_attrs = local.file_copier.get_object_attributes(embargo_bucket, manifest_key)
+    target_attrs = local.file_copier.get_object_attributes(publish_bucket, manifest_key)
+
+    return CopyResult(
+        source_bucket=source_attrs.bucket,
+        source_key=source_attrs.key,
+        source_size=source_attrs.size,
+        source_version_id=source_attrs.version_id,
+        source_etag=source_attrs.etag,
+        source_sha256=source_attrs.sha256,
+        target_bucket=target_attrs.bucket,
+        target_key=target_attrs.key,
+        target_size=target_attrs.size,
+        target_version_id=target_attrs.version_id,
+        target_etag=target_attrs.etag,
+        target_sha256=target_attrs.sha256,
+    )
+
+
+def get_file_entry_path_or_fail(file_entry):
+    path = file_entry.get("path")
+    if not path:
+        raise ValueError(
+            f"manifest.json file entry missing required 'path' field: {file_entry}"
+        )
+    return path
+
+
+def serialize_manifest(manifest):
+    return json.dumps(manifest, indent=2).encode("utf-8")
+
+
+def set_manifest_size(manifest):
+    manifest_self_entry = None
+    for file_entry in manifest.get("files", []):
+        if get_file_entry_path_or_fail(file_entry) == MANIFEST_FILENAME:
+            manifest_self_entry = file_entry
+            break
+    if manifest_self_entry is None:
+        raise ValueError(f"{MANIFEST_FILENAME} file is missing entry for self")
+
+    manifest_self_entry["size"] = 0
+    # subtract one byte for length of 0 character
+    manifest_len_no_size = len(serialize_manifest(manifest)) - 1
+    len_of_size = len(str(manifest_len_no_size))
+    size = manifest_len_no_size + len_of_size
+    # needs adjustment if we are at a power of 10
+    if len(str(size)) > len_of_size:
+        size += 1
+    manifest_self_entry["size"] = size
 
 
 def iter_keys(bucket, prefix):
