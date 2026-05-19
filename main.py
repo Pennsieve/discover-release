@@ -100,7 +100,7 @@ structlog.configure(
 class ObjectAttributes:
     bucket: str
     key: str
-    size: int
+    size: str
     version_id: str
     etag: str
     sha256: str
@@ -135,13 +135,13 @@ class CopyRequest:
 class CopyResult:
     source_bucket: str
     source_key: str
-    source_size: int
+    source_size: str
     source_version_id: str
     source_etag: str
     source_sha256: str
     target_bucket: str
     target_key: str
-    target_size: int
+    target_size: str
     target_version_id: str
     target_etag: str
     target_sha256: str
@@ -165,7 +165,7 @@ class FileCopier:
         return ObjectAttributes(
             bucket=bucket,
             key=key,
-            size=response.get("ObjectSize", 0),
+            size=response.get("ObjectSize", "0"),
             version_id=response.get("VersionId", "none"),
             etag=response.get("ETag", "none"),
             sha256=response.get("Checksum", {}).get("ChecksumSHA256", "none"),
