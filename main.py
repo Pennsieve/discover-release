@@ -131,20 +131,40 @@ class CopyRequest:
     checksum_algorithm: str
 
 
+# These objects are deserialized into Scala objects in
+# the discover-service SQS handler where all fields are
+# expected to be strings.
 @dataclass
 class CopyResult:
     source_bucket: str
     source_key: str
-    source_size: int
+    source_size: str
     source_version_id: str
     source_etag: str
     source_sha256: str
     target_bucket: str
     target_key: str
-    target_size: int
+    target_size: str
     target_version_id: str
     target_etag: str
     target_sha256: str
+
+    @classmethod
+    def from_attributes(cls, source: ObjectAttributes, target: ObjectAttributes):
+        return cls(
+            source_bucket=source.bucket,
+            source_key=source.key,
+            source_size=str(source.size),
+            source_version_id=source.version_id,
+            source_etag=source.etag,
+            source_sha256=source.sha256,
+            target_bucket=target.bucket,
+            target_key=target.key,
+            target_size=str(target.size),
+            target_version_id=target.version_id,
+            target_etag=target.etag,
+            target_sha256=target.sha256,
+        )
 
 
 class FileCopier:
@@ -285,20 +305,7 @@ class FileCopier:
             request.target_bucket, request.target_key
         )
 
-        return CopyResult(
-            source_bucket=source_attributes.bucket,
-            source_key=source_attributes.key,
-            source_size=source_attributes.size,
-            source_version_id=source_attributes.version_id,
-            source_etag=source_attributes.etag,
-            source_sha256=source_attributes.sha256,
-            target_bucket=target_attributes.bucket,
-            target_key=target_attributes.key,
-            target_size=target_attributes.size,
-            target_version_id=target_attributes.version_id,
-            target_etag=target_attributes.etag,
-            target_sha256=target_attributes.sha256,
-        )
+        return CopyResult.from_attributes(source_attributes, target_attributes)
 
 
 # Configure S3 client
@@ -555,20 +562,7 @@ def release_manifest(
     source_attrs = local.file_copier.get_object_attributes(embargo_bucket, manifest_key)
     target_attrs = local.file_copier.get_object_attributes(publish_bucket, manifest_key)
 
-    return CopyResult(
-        source_bucket=source_attrs.bucket,
-        source_key=source_attrs.key,
-        source_size=source_attrs.size,
-        source_version_id=source_attrs.version_id,
-        source_etag=source_attrs.etag,
-        source_sha256=source_attrs.sha256,
-        target_bucket=target_attrs.bucket,
-        target_key=target_attrs.key,
-        target_size=target_attrs.size,
-        target_version_id=target_attrs.version_id,
-        target_etag=target_attrs.etag,
-        target_sha256=target_attrs.sha256,
-    )
+    return CopyResult.from_attributes(source_attrs, target_attrs)
 
 
 def get_file_entry_path_or_fail(file_entry):

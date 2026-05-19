@@ -398,6 +398,37 @@ def test_release_aborts_when_manifest_self_entry_missing(
     assert manifest_key in s3_keys(embargo_bucket)
 
 
+def test_release_results_only_contain_string_values(publish_bucket, embargo_bucket):
+    """
+    discover-release-results.json is consumed by the Scala discover-service,
+    which deserializes each entry into a case class whose every field is a
+    String. Any non-string value (e.g. an int leaking through from
+    s3.get_object_attributes' ObjectSize) breaks Scala deserialization at
+    runtime, so guard the JSON output against type drift.
+    """
+    s3_key = os.path.join(S3_PREFIX_TO_MOVE, FILENAME)
+    upload_dummy(embargo_bucket, s3_key)
+    create_and_upload_manifest(embargo_bucket, S3_PREFIX_TO_MOVE, [FILENAME])
+
+    request_id = str(uuid.uuid4())
+    release_files(request_id, S3_PREFIX_TO_MOVE, EMBARGO_BUCKET, PUBLISH_BUCKET)
+
+    release_results_key = os.path.join(
+        S3_PREFIX_TO_MOVE, "discover-release-results.json"
+    )
+    body = s3_resource.Object(PUBLISH_BUCKET, release_results_key).get()["Body"].read()
+    results = json.loads(body)
+
+    assert results, "expected at least one CopyResult in the release results"
+    for i, record in enumerate(results):
+        assert isinstance(record, dict), f"record {i} is not a dict: {record!r}"
+        for field, value in record.items():
+            assert isinstance(value, str), (
+                f"record {i} field {field!r} is "
+                f"{type(value).__name__} ({value!r}), expected str"
+            )
+
+
 def test_set_manifest_size_matches_serialized_length_across_range():
     """
     manifest.json carries a self-referencing `size`: the byte count of the
