@@ -131,6 +131,9 @@ class CopyRequest:
     checksum_algorithm: str
 
 
+# These objects are deserialized into Scala objects in
+# the discover-service SQS handler where all fields are
+# expected to be strings.
 @dataclass
 class CopyResult:
     source_bucket: str
