@@ -161,6 +161,8 @@ data "aws_iam_policy_document" "ecs_task_iam_policy_document" {
       "${data.terraform_remote_state.platform_infrastructure.outputs.rejoin_embargo50_bucket_arn}/*",
       data.terraform_remote_state.platform_infrastructure.outputs.precision_embargo50_bucket_arn,
       "${data.terraform_remote_state.platform_infrastructure.outputs.precision_embargo50_bucket_arn}/*",
+      data.terraform_remote_state.platform_infrastructure.outputs.ember_pennsieve_storage_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.ember_pennsieve_storage_bucket_arn}/*",
     ]
   }
 
@@ -207,6 +209,8 @@ data "aws_iam_policy_document" "ecs_task_iam_policy_document" {
       "${data.terraform_remote_state.platform_infrastructure.outputs.rejoin_publish50_bucket_arn}/*",
       data.terraform_remote_state.platform_infrastructure.outputs.precision_publish50_bucket_arn,
       "${data.terraform_remote_state.platform_infrastructure.outputs.precision_publish50_bucket_arn}/*",
+      data.terraform_remote_state.platform_infrastructure.outputs.ember_pennsieve_storage_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.ember_pennsieve_storage_bucket_arn}/*",
       data.terraform_remote_state.platform_infrastructure.outputs.awsod_sparc_publish50_bucket_arn,
       "${data.terraform_remote_state.platform_infrastructure.outputs.awsod_sparc_publish50_bucket_arn}/*",
       data.terraform_remote_state.platform_infrastructure.outputs.awsod_edots_publish50_bucket_arn,
